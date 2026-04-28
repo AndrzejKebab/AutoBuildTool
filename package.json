@@ -1,0 +1,25 @@
+{
+  "name": "com.andrzejkebab.abs",
+  "version": "0.9.9",
+  "displayName": "Auto Build System",
+  "description": "",
+  "unity": "6000.0",
+  "unityRelease": "76f1",
+  "documentationUrl": "https://github.com/AndrzejKebab/AutoBuildTool/blob/main/README.md",
+  "changelogUrl": "",
+  "licensesUrl": "https://github.com/AndrzejKebab/AutoBuildTool/blob/main/LICENSE",
+  "dependencies": {
+    "com.unity.burst": "1.8.17",
+    "com.unity.collections": "2.5.1",
+    "com.unity.mathematics": "1.3.2"
+ },
+ "keywords": [
+   "build",
+   "automation",
+   "tools"
+  ],
+  "author": {
+    "name": "AndrzejKebab",
+    "url": "https://github.com/AndrzejKebab"
+  }
+}
