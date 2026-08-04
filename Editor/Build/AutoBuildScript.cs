@@ -14,9 +14,9 @@ namespace AutoBuildTool.Editor.Build
 	{
 		#region Constants
 
-		private const string BUILDS_FOLDER = "Builds";
-		private const string SERVER_FOLDER = "Server";
-		private const string CLIENT_FOLDER = "Client";
+		private const string BUILDS_FOLDER     = "Builds";
+		private const string SERVER_FOLDER     = "Server";
+		private const string CLIENT_FOLDER     = "Client";
 		private const char   VERSION_SEPARATOR = ':';
 		private const char   VERSION_DOT       = '.';
 
@@ -24,7 +24,13 @@ namespace AutoBuildTool.Editor.Build
 
 		#region Version Management
 
-		private enum BumpType { Build, Patch, Minor, Major }
+		private enum BumpType
+		{
+			Build,
+			Patch,
+			Minor,
+			Major
+		}
 
 		private readonly struct VersionInfo
 		{
@@ -33,7 +39,7 @@ namespace AutoBuildTool.Editor.Build
 			private readonly int patch;
 			private readonly int build;
 
-			public VersionInfo(int major, int minor, int patch, int build)
+			private VersionInfo(int major, int minor, int patch, int build)
 			{
 				this.major = major;
 				this.minor = minor;
@@ -44,7 +50,7 @@ namespace AutoBuildTool.Editor.Build
 			public static VersionInfo Parse(string versionString)
 			{
 				int major = 0, minor = 0, patch = 0, build = 0;
-				
+
 				if (string.IsNullOrEmpty(versionString)) return new VersionInfo(0, 0, 0, 0);
 
 				var parts       = versionString.Split(VERSION_SEPARATOR);
@@ -59,18 +65,21 @@ namespace AutoBuildTool.Editor.Build
 				return new VersionInfo(major, minor, patch, build);
 			}
 
-			public override string ToString() => $"{major}.{minor}.{patch}:{build}";
+			public override string ToString()
+			{
+				return $"{major}.{minor}.{patch}:{build}";
+			}
 
 			public VersionInfo Bump(BumpType bumpType)
 			{
 				return bumpType switch
-				{
-					BumpType.Major => new VersionInfo(major + 1, 0, 0, 0),
-					BumpType.Minor => new VersionInfo(major, minor + 1, 0, 0),
-					BumpType.Patch => new VersionInfo(major, minor, patch + 1, 0),
-					BumpType.Build => new VersionInfo(major, minor, patch, build + 1),
-					_              => throw new ArgumentOutOfRangeException(nameof(bumpType), bumpType, null)
-				};
+				       {
+					       BumpType.Major => new VersionInfo(major + 1, 0, 0, 0),
+					       BumpType.Minor => new VersionInfo(major, minor + 1, 0, 0),
+					       BumpType.Patch => new VersionInfo(major, minor, patch + 1, 0),
+					       BumpType.Build => new VersionInfo(major, minor, patch, build + 1),
+					       _              => throw new ArgumentOutOfRangeException(nameof(bumpType), bumpType, null)
+				       };
 			}
 		}
 
@@ -90,10 +99,29 @@ namespace AutoBuildTool.Editor.Build
 
 		#region Menu Items
 
-		[MenuItem("Build/Build (Bump Build)")] public static void BuildBumpBuild() => BuildBoth(BumpType.Build);
-		[MenuItem("Build/Build (Bump Patch)")] public static void BuildBumpPatch() => BuildBoth(BumpType.Patch);
-		[MenuItem("Build/Build (Bump Minor)")] public static void BuildBumpMinor() => BuildBoth(BumpType.Minor);
-		[MenuItem("Build/Build (Bump Major)")] public static void BuildBumpMajor() => BuildBoth(BumpType.Major);
+		[MenuItem("Build/Build (Bump Build)")]
+		public static void BuildBumpBuild()
+		{
+			BuildBoth(BumpType.Build);
+		}
+
+		[MenuItem("Build/Build (Bump Patch)")]
+		public static void BuildBumpPatch()
+		{
+			BuildBoth(BumpType.Patch);
+		}
+
+		[MenuItem("Build/Build (Bump Minor)")]
+		public static void BuildBumpMinor()
+		{
+			BuildBoth(BumpType.Minor);
+		}
+
+		[MenuItem("Build/Build (Bump Major)")]
+		public static void BuildBumpMajor()
+		{
+			BuildBoth(BumpType.Major);
+		}
 
 		#endregion
 
@@ -117,17 +145,15 @@ namespace AutoBuildTool.Editor.Build
 			try
 			{
 				if (autoSettings.GetEnableServerBuild())
-				{
 					foreach (BuildProfile profile in autoSettings.GetActiveServerProfiles())
-					{
-						BuildProfileTarget(basePath, SERVER_FOLDER, profile, true, autoSettings.GetAdditionalServerFolders(), autoSettings.GetAdditionalServerFiles());
-					}
-				}
+						BuildProfileTarget(basePath, SERVER_FOLDER, profile, true,
+						                   autoSettings.GetAdditionalServerFolders(),
+						                   autoSettings.GetAdditionalServerFiles());
 
 				foreach (BuildProfile profile in autoSettings.GetActiveClientProfiles())
-				{
-					BuildProfileTarget(basePath, CLIENT_FOLDER, profile, false, autoSettings.GetAdditionalClientFolders(), autoSettings.GetAdditionalClientFiles());
-				}
+					BuildProfileTarget(basePath, CLIENT_FOLDER, profile, false,
+					                   autoSettings.GetAdditionalClientFolders(),
+					                   autoSettings.GetAdditionalClientFiles());
 			}
 			finally
 			{
@@ -141,26 +167,26 @@ namespace AutoBuildTool.Editor.Build
 			EditorUtility.RevealInFinder(basePath);
 		}
 
-		private static void BuildProfileTarget(string basePath, string typeFolder, BuildProfile profile, bool isServer, List<CustomFolder> folders, List<CustomFile> files)
+		private static void BuildProfileTarget(string basePath, string typeFolder, BuildProfile profile, bool isServer,
+		                                       List<CustomFolder> folders, List<CustomFile> files)
 		{
 			BuildProfile.SetActiveBuildProfile(profile);
 
-			BuildTarget platform = GetBuildTarget(profile);
-			string platformName = platform.ToString();
-			string outputDir = Path.Combine(basePath, typeFolder, platformName);
-			
-			string ext = GetExtension(platform);
-			string exeName = isServer ? $"{PlayerSettings.productName}_Server{ext}" : $"{PlayerSettings.productName}{ext}";
-			
-			bool isFolderBuild = string.IsNullOrEmpty(ext);
-			string buildPath = isFolderBuild ? outputDir : Path.Combine(outputDir, exeName);
+			BuildTarget platform     = GetBuildTarget(profile);
+			var         platformName = platform.ToString();
+			var         outputDir    = Path.Combine(basePath, typeFolder, platformName);
+
+			var ext     = GetExtension(platform);
+			var exeName = isServer ? $"{PlayerSettings.productName}_Server{ext}" : $"{PlayerSettings.productName}{ext}";
+
+			var isFolderBuild = string.IsNullOrEmpty(ext);
+			var buildPath     = isFolderBuild ? outputDir : Path.Combine(outputDir, exeName);
 
 			var buildOptions = new BuildPlayerWithProfileOptions
-			{
-				buildProfile     = profile,
-				locationPathName = buildPath,
-				options          = BuildOptions.CleanBuildCache
-			};
+			                   {
+				                   buildProfile     = profile,
+				                   locationPathName = buildPath
+			                   };
 
 			BuildReport report = BuildPipeline.BuildPlayer(buildOptions);
 
@@ -172,48 +198,46 @@ namespace AutoBuildTool.Editor.Build
 
 			Debug.Log($"Build succeeded: {buildPath}");
 
-			string customFilesDir = isFolderBuild ? buildPath : Path.GetDirectoryName(buildPath);
+			var customFilesDir = isFolderBuild ? buildPath : Path.GetDirectoryName(buildPath);
 			CreateFolderTree(customFilesDir, folders);
 			CreateRootFiles(customFilesDir, files);
 		}
-		
+
 		private static void CleanupOldBuilds(AutoBuildSettings settings)
 		{
 			if (!settings.GetEnableBuildRetention()) return;
 			if (!Directory.Exists(BUILDS_FOLDER)) return;
 
-			int maxBuilds = settings.GetMaxBuildsToKeep();
+			var maxBuilds = settings.GetMaxBuildsToKeep();
 			if (maxBuilds <= 0) return;
 
 			var dirInfo = new DirectoryInfo(BUILDS_FOLDER);
-			
+
 			// Get all directories that match our version naming format ("v.*")
 			// Order them descending so the newest are at the beginning (index 0)
-			var buildDirs = dirInfo.GetDirectories("v.*")
-			                       .OrderByDescending(d => d.CreationTime)
-			                       .ToList();
+			List<DirectoryInfo> buildDirs = dirInfo.GetDirectories("v.*")
+			                                       .OrderByDescending(d => d.CreationTime)
+			                                       .ToList();
 
-			if (buildDirs.Count > maxBuilds)
-			{
-				// Delete all items starting from index `maxBuilds`
-				for (int i = maxBuilds; i < buildDirs.Count; i++)
+			if (buildDirs.Count <= maxBuilds) return;
+			// Delete all items starting from index `maxBuilds`
+			for (var i = maxBuilds; i < buildDirs.Count; i++)
+				try
 				{
-					try
-					{
-						buildDirs[i].Delete(true);
-						Debug.Log($"Deleted old build to free up space: {buildDirs[i].Name}");
-					}
-					catch (Exception e)
-					{
-						Debug.LogWarning($"Failed to delete old build '{buildDirs[i].Name}'. Make sure it isn't opened by another program.\n{e.Message}");
-					}
+					buildDirs[i].Delete(true);
+					Debug.Log($"Deleted old build to free up space: {buildDirs[i].Name}");
 				}
-			}
+				catch (Exception e)
+				{
+					Debug.LogWarning($"Failed to delete old build '{buildDirs[i].Name}'. Make sure it isn't opened by another program.\n{e.Message}");
+				}
 		}
 
 		private static BuildTarget GetBuildTarget(BuildProfile profile)
 		{
-			var prop = typeof(BuildProfile).GetProperty("buildTarget", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+			PropertyInfo prop = typeof(BuildProfile).GetProperty("buildTarget",
+			                                                     BindingFlags.Instance | BindingFlags.NonPublic |
+			                                                     BindingFlags.Public);
 			if (prop != null) return (BuildTarget)prop.GetValue(profile);
 
 			using var so = new SerializedObject(profile);
@@ -223,14 +247,14 @@ namespace AutoBuildTool.Editor.Build
 		private static string GetExtension(BuildTarget platform)
 		{
 			return platform switch
-			{
-				BuildTarget.StandaloneWindows => ".exe",
-				BuildTarget.StandaloneWindows64 => ".exe",
-				BuildTarget.StandaloneOSX => ".app",
-				BuildTarget.StandaloneLinux64 => ".x86_64",
-				BuildTarget.Android => ".apk",
-				_ => "" 
-			};
+			       {
+				       BuildTarget.StandaloneWindows   => ".exe",
+				       BuildTarget.StandaloneWindows64 => ".exe",
+				       BuildTarget.StandaloneOSX       => ".app",
+				       BuildTarget.StandaloneLinux64   => ".x86_64",
+				       BuildTarget.Android             => ".apk",
+				       _                               => ""
+			       };
 		}
 
 		private static void CreateFolderTree(string parentDir, List<CustomFolder> folders)
@@ -250,45 +274,43 @@ namespace AutoBuildTool.Editor.Build
 		{
 			if (files == null) return;
 			foreach (CustomFile file in files)
-			{
-				if (file.OperationType == FileOperationType.CreateTextFile)
+				switch (file.OperationType)
 				{
-					var finalName = string.IsNullOrEmpty(file.Name) ? "NewFile.txt" : file.Name;
-					var filePath  = Path.Combine(parentDir, finalName);
-					if (!File.Exists(filePath)) File.WriteAllText(filePath, file.FileContent);
-				}
-				else if (file.OperationType == FileOperationType.CopyProjectAsset && file.SourceAsset != null)
-				{
-					string assetPath = AssetDatabase.GetAssetPath(file.SourceAsset);
-					if (string.IsNullOrEmpty(assetPath)) continue;
-
-					string fullSourcePath = Path.GetFullPath(assetPath);
-					var    finalName      = string.IsNullOrEmpty(file.Name) ? Path.GetFileName(assetPath) : file.Name;
-					var    destPath       = Path.Combine(parentDir, finalName);
-
-					if (AssetDatabase.IsValidFolder(assetPath))
+					case FileOperationType.CreateTextFile:
 					{
-						CopyDirectoryContents(fullSourcePath, destPath);
+						var finalName = string.IsNullOrEmpty(file.Name) ? "NewFile.txt" : file.Name;
+						var filePath  = Path.Combine(parentDir, finalName);
+						if (!File.Exists(filePath)) File.WriteAllText(filePath, file.FileContent);
+						break;
 					}
-					else
+					case FileOperationType.CopyProjectAsset when file.SourceAsset != null:
 					{
-						File.Copy(fullSourcePath, destPath, true);
+						var assetPath = AssetDatabase.GetAssetPath(file.SourceAsset);
+						if (string.IsNullOrEmpty(assetPath)) continue;
+
+						var fullSourcePath = Path.GetFullPath(assetPath);
+						var finalName      = string.IsNullOrEmpty(file.Name) ? Path.GetFileName(assetPath) : file.Name;
+						var destPath       = Path.Combine(parentDir, finalName);
+
+						if (AssetDatabase.IsValidFolder(assetPath))
+							CopyDirectoryContents(fullSourcePath, destPath);
+						else
+							File.Copy(fullSourcePath, destPath, true);
+						break;
 					}
+					default:
+						throw new ArgumentOutOfRangeException();
 				}
-			}
 		}
 
 		// Helper to recursively copy an entire folder while skipping Unity's internal .meta files
 		private static void CopyDirectoryContents(string sourceDir, string destDir)
 		{
-			if (!Directory.Exists(destDir))
-			{
-				Directory.CreateDirectory(destDir);
-			}
+			if (!Directory.Exists(destDir)) Directory.CreateDirectory(destDir);
 
 			foreach (var file in Directory.GetFiles(sourceDir))
 			{
-				if (file.EndsWith(".meta")) continue; 
+				if (file.EndsWith(".meta")) continue;
 				var destFile = Path.Combine(destDir, Path.GetFileName(file));
 				File.Copy(file, destFile, true);
 			}

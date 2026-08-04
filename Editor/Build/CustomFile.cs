@@ -1,5 +1,6 @@
 ﻿using System;
 using UnityEngine;
+using Object = UnityEngine.Object;
 
 namespace AutoBuildTool.Editor.Build
 {
@@ -12,10 +13,9 @@ namespace AutoBuildTool.Editor.Build
 	[Serializable]
 	public struct CustomFile
 	{
-		public FileOperationType OperationType;
-		public string            Name;
-		[TextArea(1, 20)] 
-		public string             FileContent;
-		public UnityEngine.Object SourceAsset;
+		public                   FileOperationType OperationType;
+		public                   string            Name;
+		[TextArea(1, 20)] public string            FileContent;
+		public                   Object            SourceAsset;
 	}
 }

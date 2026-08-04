@@ -1,27 +1,30 @@
 ﻿using System;
+using System.IO;
 using AutoBuildTool.Editor.Build;
 using UnityEditor;
+using UnityEditor.Build.Profile;
 using UnityEditor.IMGUI.Controls;
 using UnityEngine;
+using Object = UnityEngine.Object;
 
 namespace AutoBuildTool.Editor
 {
 	[CustomEditor(typeof(AutoBuildSettings))]
 	public class AutoBuildSettingsEditor : UnityEditor.Editor
 	{
-		private SerializedProperty  clientProfiles;
 		private SerializedProperty  clientFiles;
 		private SerializedProperty  clientFolders;
+		private SerializedProperty  clientProfiles;
 		private BuildFolderTreeView clientTree;
 		private TreeViewState<int>  clientTreeState;
-
-		private SerializedProperty  enableServerBuild;
 		private SerializedProperty  enableBuildRetention;
-		private SerializedProperty  maxBuildsToKeep;
-		
+
+		private SerializedProperty enableServerBuild;
+		private SerializedProperty maxBuildsToKeep;
+		private SerializedProperty serverFiles;
+		private SerializedProperty serverFolders;
+
 		private SerializedProperty  serverProfiles;
-		private SerializedProperty  serverFiles;
-		private SerializedProperty  serverFolders;
 		private BuildFolderTreeView serverTree;
 		private TreeViewState<int>  serverTreeState;
 
@@ -29,10 +32,10 @@ namespace AutoBuildTool.Editor
 		{
 			var settings = (AutoBuildSettings)target;
 			settings.SyncProfiles(); // Ensure profiles are up to date when the inspector opens
-			
-			enableServerBuild = serializedObject.FindProperty("enableServerBuild");
+
+			enableServerBuild    = serializedObject.FindProperty("enableServerBuild");
 			enableBuildRetention = serializedObject.FindProperty("enableBuildRetention");
-			maxBuildsToKeep = serializedObject.FindProperty("maxBuildsToKeep");
+			maxBuildsToKeep      = serializedObject.FindProperty("maxBuildsToKeep");
 
 			clientProfiles = serializedObject.FindProperty("clientProfiles");
 			serverProfiles = serializedObject.FindProperty("serverProfiles");
@@ -74,7 +77,7 @@ namespace AutoBuildTool.Editor
 			for (var i = arrayProp.arraySize - 1; i >= 0; i--)
 			{
 				SerializedProperty elem = arrayProp.GetArrayElementAtIndex(i);
-				if (elem.managedReferenceValue == null) 
+				if (elem.managedReferenceValue == null)
 				{
 					arrayProp.DeleteArrayElementAtIndex(i);
 				}
@@ -89,14 +92,11 @@ namespace AutoBuildTool.Editor
 		public override void OnInspectorGUI()
 		{
 			serializedObject.Update();
-			
+
 			GUILayout.Label("General Settings", EditorStyles.boldLabel);
 			GUILayout.BeginHorizontal();
 			EditorGUILayout.PropertyField(enableServerBuild, new GUIContent("Enable Server Build"));
-			if (GUILayout.Button("Refresh Profiles", GUILayout.Width(120)))
-			{
-				((AutoBuildSettings)target).SyncProfiles();
-			}
+			if (GUILayout.Button("Refresh Profiles", GUILayout.Width(120))) ((AutoBuildSettings)target).SyncProfiles();
 			GUILayout.EndHorizontal();
 
 			EditorGUILayout.PropertyField(enableBuildRetention, new GUIContent("Enable Build Retention"));
@@ -106,9 +106,9 @@ namespace AutoBuildTool.Editor
 				EditorGUILayout.PropertyField(maxBuildsToKeep, new GUIContent("Max Builds To Keep"));
 				EditorGUI.indentLevel--;
 			}
-			
+
 			GUILayout.Space(15);
-			
+
 			DrawClientSection();
 			GUILayout.Space(20);
 			if (enableServerBuild.boolValue)
@@ -148,6 +148,7 @@ namespace AutoBuildTool.Editor
 				AddRootFile(clientFiles);
 				clientTree.Reload();
 			}
+
 			GUILayout.EndHorizontal();
 
 			Rect rect = GUILayoutUtility.GetRect(0, 150, GUILayout.ExpandWidth(true));
@@ -174,6 +175,7 @@ namespace AutoBuildTool.Editor
 				AddRootFile(serverFiles);
 				serverTree.Reload();
 			}
+
 			GUILayout.EndHorizontal();
 
 			Rect rect = GUILayoutUtility.GetRect(0, 150, GUILayout.ExpandWidth(true));
@@ -189,31 +191,29 @@ namespace AutoBuildTool.Editor
 			}
 
 			EditorGUI.BeginChangeCheck();
-			for (int i = 0; i < listProp.arraySize; i++)
+			for (var i = 0; i < listProp.arraySize; i++)
 			{
-				SerializedProperty elem = listProp.GetArrayElementAtIndex(i);
+				SerializedProperty elem        = listProp.GetArrayElementAtIndex(i);
 				SerializedProperty enabledProp = elem.FindPropertyRelative("IsEnabled");
 				SerializedProperty profileProp = elem.FindPropertyRelative("Profile");
 
 				GUILayout.BeginHorizontal();
-				
+
 				// Draw Checkbox
 				enabledProp.boolValue = EditorGUILayout.Toggle(enabledProp.boolValue, GUILayout.Width(20));
-				
+
 				// Lock the object field so the user cannot modify it
 				EditorGUI.BeginDisabledGroup(true);
-				
-				var currentProfile = profileProp.objectReferenceValue;
-				EditorGUILayout.ObjectField(GUIContent.none, currentProfile, typeof(UnityEditor.Build.Profile.BuildProfile), false);
-				
+
+				Object currentProfile = profileProp.objectReferenceValue;
+				EditorGUILayout.ObjectField(GUIContent.none, currentProfile, typeof(BuildProfile), false);
+
 				EditorGUI.EndDisabledGroup(); // Unlock GUI state for the next elements
-				
+
 				GUILayout.EndHorizontal();
 			}
-			if (EditorGUI.EndChangeCheck())
-			{
-				serializedObject.ApplyModifiedProperties();
-			}
+
+			if (EditorGUI.EndChangeCheck()) serializedObject.ApplyModifiedProperties();
 		}
 
 		private void DrawFileEditor()
@@ -230,7 +230,7 @@ namespace AutoBuildTool.Editor
 			GUILayout.Label("File / Asset Editor", EditorStyles.boldLabel);
 
 			EditorGUI.BeginChangeCheck();
-			
+
 			SerializedProperty opTypeProp = file.FindPropertyRelative("OperationType");
 			EditorGUILayout.PropertyField(opTypeProp, new GUIContent("Operation Type"));
 
@@ -242,35 +242,32 @@ namespace AutoBuildTool.Editor
 			else
 			{
 				SerializedProperty sourceAssetProp = file.FindPropertyRelative("SourceAsset");
-				
+
 				EditorGUI.BeginChangeCheck();
 				EditorGUILayout.PropertyField(sourceAssetProp, new GUIContent("Asset to Copy"));
 				if (EditorGUI.EndChangeCheck())
-				{
 					// Auto-fill the Name field based on the selected asset
 					if (sourceAssetProp.objectReferenceValue != null)
 					{
-						string assetPath = AssetDatabase.GetAssetPath(sourceAssetProp.objectReferenceValue);
+						var assetPath = AssetDatabase.GetAssetPath(sourceAssetProp.objectReferenceValue);
 						if (!string.IsNullOrEmpty(assetPath))
-						{
-							file.FindPropertyRelative("Name").stringValue = System.IO.Path.GetFileName(assetPath);
-						}
+							file.FindPropertyRelative("Name").stringValue = Path.GetFileName(assetPath);
 					}
-				}
-				
+
 				EditorGUILayout.PropertyField(file.FindPropertyRelative("Name"), new GUIContent("Destination Name"));
-				EditorGUILayout.HelpBox("Select any file or folder from your project. It will be copied exactly as it is into the build folder. (.meta files are ignored)", MessageType.Info);
+				// lang=none
+				EditorGUILayout
+					.HelpBox("Select any file or folder from your project. It will be copied exactly as it is into the build folder. (.meta files are ignored)",
+					         MessageType.Info);
 			}
 
-			if (EditorGUI.EndChangeCheck())
-			{
-				serializedObject.ApplyModifiedProperties();
-				clientTree.Reload();
-				serverTree.Reload();
-				serializedObject.Update();
-			}
+			if (!EditorGUI.EndChangeCheck()) return;
+			serializedObject.ApplyModifiedProperties();
+			clientTree.Reload();
+			serverTree.Reload();
+			serializedObject.Update();
 		}
-		
+
 		private void AddRootFolder(SerializedProperty folders)
 		{
 			folders.InsertArrayElementAtIndex(folders.arraySize);

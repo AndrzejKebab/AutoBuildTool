@@ -5,22 +5,12 @@ using AutoBuildTool.Editor.Build;
 using UnityEditor;
 using UnityEditor.IMGUI.Controls;
 using UnityEngine;
+using Object = UnityEngine.Object;
 
 namespace AutoBuildTool.Editor
 {
 	public class BuildFolderTreeView : TreeView<int>
 	{
-		private class ClipboardData
-		{
-			public          bool                IsFile;
-			public          string              Name;
-			public          string              FileContent;
-			public          int                 OperationType;
-			public          UnityEngine.Object  SourceAsset;
-			public readonly List<ClipboardData> SubFolders = new();
-			public readonly List<ClipboardData> Files      = new();
-		}
-
 		private static readonly List<ClipboardData> clipboard = new();
 		private readonly        Texture             fileIcon;
 
@@ -28,9 +18,9 @@ namespace AutoBuildTool.Editor
 		private readonly SerializedProperty rootFiles;
 		private readonly SerializedProperty rootFolders;
 		private readonly SerializedObject   so;
+		public           Action             OnSelectionChangedCallback;
 
-		private int    idCounter;
-		public  Action OnSelectionChangedCallback;
+		private int idCounter;
 
 		public BuildFolderTreeView(TreeViewState<int> state, SerializedObject so, SerializedProperty folders,
 		                           SerializedProperty files)
@@ -69,7 +59,8 @@ namespace AutoBuildTool.Editor
 					SerializedProperty file     = rootFiles.GetArrayElementAtIndex(i);
 					SerializedProperty nameProp = file.FindPropertyRelative("Name");
 					if (nameProp != null)
-						rows.Add(new BuildFolderTreeItem(idCounter++, 0, nameProp.stringValue, true, file.propertyPath));
+						rows.Add(new BuildFolderTreeItem(idCounter++, 0, nameProp.stringValue, true,
+						                                 file.propertyPath));
 				}
 
 			if (rows.Count == 0)
@@ -404,7 +395,8 @@ namespace AutoBuildTool.Editor
 				return isFilePaste ? rootFiles : rootFolders;
 
 			if (!targetItem.IsFile)
-				return so.FindProperty(targetItem.PropertyPath).FindPropertyRelative(isFilePaste ? "Files" : "SubFolders");
+				return so.FindProperty(targetItem.PropertyPath)
+				         .FindPropertyRelative(isFilePaste ? "Files" : "SubFolders");
 
 			var filesIndex = targetItem.PropertyPath.IndexOf(".Files", StringComparison.Ordinal);
 			if (filesIndex == -1) return isFilePaste ? rootFiles : rootFolders;
@@ -519,6 +511,7 @@ namespace AutoBuildTool.Editor
 					e.Use();
 					break;
 				default:
+					// ReSharper disable once SwitchStatementMissingSomeEnumCasesNoDefault
 					switch (e.keyCode)
 					{
 						case KeyCode.Delete:
@@ -533,6 +526,17 @@ namespace AutoBuildTool.Editor
 
 					break;
 			}
+		}
+
+		private class ClipboardData
+		{
+			public readonly List<ClipboardData> Files      = new();
+			public readonly List<ClipboardData> SubFolders = new();
+			public          string              FileContent;
+			public          bool                IsFile;
+			public          string              Name;
+			public          int                 OperationType;
+			public          Object              SourceAsset;
 		}
 	}
 }

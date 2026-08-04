@@ -22,52 +22,65 @@ namespace AutoBuildTool.Editor.Build
 
 	public class AutoBuildSettings : ScriptableObject
 	{
-		[Header("General")]
-		[SerializeField] private bool enableServerBuild;
-		
-		[Header("Build Retention")]
-		[SerializeField] private bool enableBuildRetention = false;
-		[SerializeField, Min(1)] private int maxBuildsToKeep = 3;
+		[Header("General")] [SerializeField] private bool enableServerBuild;
 
-		[Header("Client")] 
-		[SerializeField] private List<ProfileState> clientProfiles = new();
+		[Header("Build Retention")] [SerializeField]
+		private bool enableBuildRetention;
+
+		[SerializeField] [Min(1)] private int maxBuildsToKeep = 3;
+
+		[Header("Client")] [SerializeField] private List<ProfileState> clientProfiles = new();
+
 		[SerializeReference] private List<CustomFolder> additionalClientFolders = new();
-		[SerializeField] private List<CustomFile>   additionalClientFiles;
+		[SerializeField]     private List<CustomFile>   additionalClientFiles;
 
-		[Header("Server")] 
-		[SerializeField] private List<ProfileState> serverProfiles = new();
+		[Header("Server")] [SerializeField] private List<ProfileState> serverProfiles = new();
+
 		[SerializeReference] private List<CustomFolder> additionalServerFolders = new();
-		[SerializeField] private List<CustomFile>   additionalServerFiles;
+		[SerializeField]     private List<CustomFile>   additionalServerFiles;
 
-		public bool GetEnableServerBuild() => enableServerBuild;
-		public bool GetEnableBuildRetention() => enableBuildRetention;
-		public int GetMaxBuildsToKeep() => maxBuildsToKeep;
+		public bool GetEnableServerBuild()
+		{
+			return enableServerBuild;
+		}
+
+		public bool GetEnableBuildRetention()
+		{
+			return enableBuildRetention;
+		}
+
+		public int GetMaxBuildsToKeep()
+		{
+			return maxBuildsToKeep;
+		}
 
 		// Automatically synchronizes the serialized lists with the actual assets in your project
 		public void SyncProfiles()
 		{
-			var allProfiles = BuildProfile.GetAllBuildProfiles().Where(p => p != null).ToList();
+			List<BuildProfile> allProfiles = BuildProfile.GetAllBuildProfiles().Where(p => p != null).ToList();
 
-			var actualClientProfiles = allProfiles.Where(p => p.name.IndexOf("Server", StringComparison.OrdinalIgnoreCase) < 0).ToList();
-			var actualServerProfiles = allProfiles.Where(p => p.name.IndexOf("Server", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+			List<BuildProfile> actualClientProfiles = allProfiles
+			                                          .Where(p => p.name.IndexOf("Server",
+				                                                       StringComparison.OrdinalIgnoreCase) <
+			                                                      0).ToList();
+			List<BuildProfile> actualServerProfiles = allProfiles
+			                                          .Where(p => p.name.IndexOf("Server",
+				                                                       StringComparison.OrdinalIgnoreCase) >= 0)
+			                                          .ToList();
 
 			SyncList(clientProfiles, actualClientProfiles);
 			SyncList(serverProfiles, actualServerProfiles);
 		}
 
-		private void SyncList(List<ProfileState> states, List<BuildProfile> actualProfiles)
+		private static void SyncList(List<ProfileState> states, List<BuildProfile> actualProfiles)
 		{
 			// Remove any profiles that were deleted from the project
 			states.RemoveAll(s => s.Profile == null || !actualProfiles.Contains(s.Profile));
 
 			// Add any newly created profiles that aren't in the list yet
-			foreach (var p in actualProfiles)
-			{
+			foreach (BuildProfile p in actualProfiles)
 				if (states.All(s => s.Profile != p))
-				{
 					states.Add(new ProfileState(p));
-				}
-			}
 		}
 
 		public List<BuildProfile> GetActiveClientProfiles()
@@ -80,10 +93,25 @@ namespace AutoBuildTool.Editor.Build
 			return serverProfiles.Where(p => p.IsEnabled && p.Profile != null).Select(p => p.Profile).ToList();
 		}
 
-		public List<CustomFolder> GetAdditionalClientFolders() => additionalClientFolders;
-		public List<CustomFile> GetAdditionalClientFiles() => additionalClientFiles;
-		public List<CustomFolder> GetAdditionalServerFolders() => additionalServerFolders;
-		public List<CustomFile> GetAdditionalServerFiles() => additionalServerFiles;
+		public List<CustomFolder> GetAdditionalClientFolders()
+		{
+			return additionalClientFolders;
+		}
+
+		public List<CustomFile> GetAdditionalClientFiles()
+		{
+			return additionalClientFiles;
+		}
+
+		public List<CustomFolder> GetAdditionalServerFolders()
+		{
+			return additionalServerFolders;
+		}
+
+		public List<CustomFile> GetAdditionalServerFiles()
+		{
+			return additionalServerFiles;
+		}
 
 		public static AutoBuildSettings GetAutoBuildSettings()
 		{
@@ -102,10 +130,7 @@ namespace AutoBuildTool.Editor.Build
 
 			settings = CreateInstance<AutoBuildSettings>();
 
-			if (!AssetDatabase.IsValidFolder("Assets/Editor"))
-			{
-				AssetDatabase.CreateFolder("Assets", "Editor");
-			}
+			if (!AssetDatabase.IsValidFolder("Assets/Editor")) AssetDatabase.CreateFolder("Assets", "Editor");
 
 			AssetDatabase.CreateAsset(settings, defaultPath);
 			AssetDatabase.SaveAssets();
