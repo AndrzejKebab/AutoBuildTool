@@ -2,13 +2,12 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
-using AutoBuildTool.Editor.Build;
 using UnityEditor;
 using UnityEditor.Build.Profile;
 using UnityEditor.Build.Reporting;
 using UnityEngine;
 
-namespace ABS.Build
+namespace AutoBuildTool.Editor.Build
 {
 	public static class AutoBuildScript
 	{
@@ -107,6 +106,11 @@ namespace ABS.Build
 			var basePath     = Path.Combine(BUILDS_FOLDER, $"v.{safeVersion}");
 			var autoSettings = AutoBuildSettings.GetAutoBuildSettings();
 
+			// Force a sync right before building to ensure lists reflect reality
+			autoSettings.SyncProfiles();
+			EditorUtility.SetDirty(autoSettings);
+			AssetDatabase.SaveAssets();
+
 			// Store the current profile so we don't mess up the user's Editor state
 			var originalProfile = BuildProfile.GetActiveBuildProfile();
 
@@ -114,16 +118,16 @@ namespace ABS.Build
 			{
 				if (autoSettings.GetEnableServerBuild())
 				{
-					foreach (BuildProfile profile in autoSettings.GetServerBuildProfiles())
+					// GetActiveServerProfiles() filters out unchecked profiles
+					foreach (BuildProfile profile in autoSettings.GetActiveServerProfiles())
 					{
-						if (profile == null) continue;
 						BuildProfileTarget(basePath, SERVER_FOLDER, profile, true, autoSettings.GetAdditionalServerFolders(), autoSettings.GetAdditionalServerFiles());
 					}
 				}
 
-				foreach (BuildProfile profile in autoSettings.GetClientBuildProfiles())
+				// GetActiveClientProfiles() filters out unchecked profiles
+				foreach (BuildProfile profile in autoSettings.GetActiveClientProfiles())
 				{
-					if (profile == null) continue;
 					BuildProfileTarget(basePath, CLIENT_FOLDER, profile, false, autoSettings.GetAdditionalClientFolders(), autoSettings.GetAdditionalClientFiles());
 				}
 			}
@@ -136,7 +140,7 @@ namespace ABS.Build
 			Debug.Log($"Build process finished for v.{version}");
 			EditorUtility.RevealInFinder(basePath);
 		}
-
+		
 		private static void BuildProfileTarget(string basePath, string typeFolder, BuildProfile profile, bool isServer, List<CustomFolder> folders, List<CustomFile> files)
 		{
 			// CRITICAL FIX: Force the profile to become Active.
@@ -178,7 +182,7 @@ namespace ABS.Build
 		
 		private static BuildTarget GetBuildTarget(BuildProfile profile)
 		{
-			var prop = typeof(BuildProfile).GetProperty("buildTarget", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+			PropertyInfo prop = typeof(BuildProfile).GetProperty("buildTarget", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
 			if (prop != null) return (BuildTarget)prop.GetValue(profile);
 
 			using var so = new SerializedObject(profile);

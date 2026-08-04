@@ -1,22 +1,23 @@
 ﻿using System;
-using ABS.Build;
-using AutoBuildTool.Editor;
 using AutoBuildTool.Editor.Build;
 using UnityEditor;
 using UnityEditor.IMGUI.Controls;
 using UnityEngine;
+using Object = UnityEngine.Object;
 
-namespace ABS
+namespace AutoBuildTool.Editor
 {
 	[CustomEditor(typeof(AutoBuildSettings))]
 	public class AutoBuildSettingsEditor : UnityEditor.Editor
 	{
+		private SerializedProperty  clientProfiles;
 		private SerializedProperty  clientFiles;
 		private SerializedProperty  clientFolders;
 		private BuildFolderTreeView clientTree;
 		private TreeViewState<int>  clientTreeState;
 
 		private SerializedProperty  enableServerBuild;
+		private SerializedProperty  serverProfiles;
 		private SerializedProperty  serverFiles;
 		private SerializedProperty  serverFolders;
 		private BuildFolderTreeView serverTree;
@@ -24,7 +25,13 @@ namespace ABS
 
 		private void OnEnable()
 		{
+			var settings = (AutoBuildSettings)target;
+			settings.SyncProfiles(); // Ensure profiles are up to date when the inspector opens
+			
 			enableServerBuild = serializedObject.FindProperty("enableServerBuild");
+
+			clientProfiles = serializedObject.FindProperty("clientProfiles");
+			serverProfiles = serializedObject.FindProperty("serverProfiles");
 
 			clientFolders = serializedObject.FindProperty("additionalClientFolders");
 			serverFolders = serializedObject.FindProperty("additionalServerFolders");
@@ -35,6 +42,7 @@ namespace ABS
 			CleanUpNullReferences(clientFolders);
 			CleanUpNullReferences(serverFolders);
 			serializedObject.ApplyModifiedProperties();
+			serializedObject.Update(); // Ensure properties reflect the Sync operation
 
 			clientTreeState ??= new TreeViewState<int>();
 			serverTreeState ??= new TreeViewState<int>();
@@ -68,7 +76,6 @@ namespace ABS
 				}
 				else
 				{
-					// Optional: Recursively clean sub-folders to prevent corrupted files deeper down the tree
 					SerializedProperty subFolders = elem.FindPropertyRelative("SubFolders");
 					if (subFolders != null) CleanUpNullReferences(subFolders);
 				}
@@ -79,15 +86,15 @@ namespace ABS
 		{
 			serializedObject.Update();
 			
-			var settings = (AutoBuildSettings)target;
-			int clientCount = settings.GetClientBuildProfiles().Count;
-			int serverCount = settings.GetServerBuildProfiles().Count;
-			
-			EditorGUILayout.HelpBox($"Auto-Discovered Profiles:\n• {clientCount} Client Profile(s)\n• {serverCount} Server Profile(s)", MessageType.Info);
-			GUILayout.Space(5);
-			
+			GUILayout.BeginHorizontal();
 			EditorGUILayout.PropertyField(enableServerBuild, new GUIContent("Enable Server Build"));
-			GUILayout.Space(5);
+			if (GUILayout.Button("Refresh Profiles", GUILayout.Width(120)))
+			{
+				((AutoBuildSettings)target).SyncProfiles();
+			}
+			GUILayout.EndHorizontal();
+			
+			GUILayout.Space(10);
 			
 			DrawClientSection();
 			GUILayout.Space(20);
@@ -110,7 +117,10 @@ namespace ABS
 
 		private void DrawClientSection()
 		{
-			GUILayout.Space(10);
+			GUILayout.Label("Client Target Profiles", EditorStyles.boldLabel);
+			DrawProfileList(clientProfiles);
+
+			GUILayout.Space(15);
 			GUILayout.Label("Client Folder Tree", EditorStyles.boldLabel);
 
 			GUILayout.BeginHorizontal();
@@ -125,7 +135,6 @@ namespace ABS
 				AddRootFile(clientFiles);
 				clientTree.Reload();
 			}
-
 			GUILayout.EndHorizontal();
 
 			Rect rect = GUILayoutUtility.GetRect(0, 150, GUILayout.ExpandWidth(true));
@@ -134,7 +143,10 @@ namespace ABS
 
 		private void DrawServerSection()
 		{
-			GUILayout.Space(10);
+			GUILayout.Label("Server Target Profiles", EditorStyles.boldLabel);
+			DrawProfileList(serverProfiles);
+
+			GUILayout.Space(15);
 			GUILayout.Label("Server Folder Tree", EditorStyles.boldLabel);
 
 			GUILayout.BeginHorizontal();
@@ -149,11 +161,42 @@ namespace ABS
 				AddRootFile(serverFiles);
 				serverTree.Reload();
 			}
-
 			GUILayout.EndHorizontal();
 
 			Rect rect = GUILayoutUtility.GetRect(0, 150, GUILayout.ExpandWidth(true));
 			serverTree?.OnGUI(rect);
+		}
+
+		private void DrawProfileList(SerializedProperty listProp)
+		{
+			if (listProp.arraySize == 0)
+			{
+				EditorGUILayout.HelpBox("No profiles discovered.", MessageType.Info);
+				return;
+			}
+
+			EditorGUI.BeginChangeCheck();
+			for (int i = 0; i < listProp.arraySize; i++)
+			{
+				SerializedProperty elem = listProp.GetArrayElementAtIndex(i);
+				SerializedProperty enabledProp = elem.FindPropertyRelative("IsEnabled");
+				SerializedProperty profileProp = elem.FindPropertyRelative("Profile");
+
+				GUILayout.BeginHorizontal();
+				
+				// Draw Checkbox
+				enabledProp.boolValue = EditorGUILayout.Toggle(enabledProp.boolValue, GUILayout.Width(20));
+				
+				// Draw a read-only object field (allows clicking to ping without allowing overwriting)
+				Object currentProfile = profileProp.objectReferenceValue;
+				EditorGUILayout.ObjectField(GUIContent.none, currentProfile, typeof(UnityEditor.Build.Profile.BuildProfile), false);
+				
+				GUILayout.EndHorizontal();
+			}
+			if (EditorGUI.EndChangeCheck())
+			{
+				serializedObject.ApplyModifiedProperties();
+			}
 		}
 
 		private void DrawFileEditor()
