@@ -200,9 +200,13 @@ namespace AutoBuildTool.Editor
 				// Draw Checkbox
 				enabledProp.boolValue = EditorGUILayout.Toggle(enabledProp.boolValue, GUILayout.Width(20));
 				
-				// Draw a read-only object field
+				// Lock the object field so the user cannot modify it
+				EditorGUI.BeginDisabledGroup(true);
+				
 				var currentProfile = profileProp.objectReferenceValue;
 				EditorGUILayout.ObjectField(GUIContent.none, currentProfile, typeof(UnityEditor.Build.Profile.BuildProfile), false);
+				
+				EditorGUI.EndDisabledGroup(); // Unlock GUI state for the next elements
 				
 				GUILayout.EndHorizontal();
 			}

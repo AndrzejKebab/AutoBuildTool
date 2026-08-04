@@ -27,7 +27,7 @@ namespace AutoBuildTool.Editor.Build
 		
 		[Header("Build Retention")]
 		[SerializeField] private bool enableBuildRetention = false;
-		[SerializeField, Min(1)] private int maxBuildsToKeep = 5;
+		[SerializeField, Min(1)] private int maxBuildsToKeep = 3;
 
 		[Header("Client")] 
 		[SerializeField] private List<ProfileState> clientProfiles = new();
