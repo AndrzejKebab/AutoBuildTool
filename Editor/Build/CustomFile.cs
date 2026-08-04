@@ -3,10 +3,19 @@ using UnityEngine;
 
 namespace AutoBuildTool.Editor.Build
 {
+	public enum FileOperationType
+	{
+		CreateTextFile,
+		CopyProjectAsset
+	}
+
 	[Serializable]
 	public struct CustomFile
 	{
-		public                   string Name;
-		[TextArea(1, 20)] public string FileContent;
+		public FileOperationType OperationType;
+		public string            Name;
+		[TextArea(1, 20)] 
+		public string             FileContent;
+		public UnityEngine.Object SourceAsset;
 	}
 }

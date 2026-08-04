@@ -251,8 +251,52 @@ namespace AutoBuildTool.Editor.Build
 			if (files == null) return;
 			foreach (CustomFile file in files)
 			{
-				var filePath = Path.Combine(parentDir, file.Name);
-				if (!File.Exists(filePath)) File.WriteAllText(filePath, file.FileContent);
+				if (file.OperationType == FileOperationType.CreateTextFile)
+				{
+					var finalName = string.IsNullOrEmpty(file.Name) ? "NewFile.txt" : file.Name;
+					var filePath  = Path.Combine(parentDir, finalName);
+					if (!File.Exists(filePath)) File.WriteAllText(filePath, file.FileContent);
+				}
+				else if (file.OperationType == FileOperationType.CopyProjectAsset && file.SourceAsset != null)
+				{
+					string assetPath = AssetDatabase.GetAssetPath(file.SourceAsset);
+					if (string.IsNullOrEmpty(assetPath)) continue;
+
+					string fullSourcePath = Path.GetFullPath(assetPath);
+					var    finalName      = string.IsNullOrEmpty(file.Name) ? Path.GetFileName(assetPath) : file.Name;
+					var    destPath       = Path.Combine(parentDir, finalName);
+
+					if (AssetDatabase.IsValidFolder(assetPath))
+					{
+						CopyDirectoryContents(fullSourcePath, destPath);
+					}
+					else
+					{
+						File.Copy(fullSourcePath, destPath, true);
+					}
+				}
+			}
+		}
+
+		// Helper to recursively copy an entire folder while skipping Unity's internal .meta files
+		private static void CopyDirectoryContents(string sourceDir, string destDir)
+		{
+			if (!Directory.Exists(destDir))
+			{
+				Directory.CreateDirectory(destDir);
+			}
+
+			foreach (var file in Directory.GetFiles(sourceDir))
+			{
+				if (file.EndsWith(".meta")) continue; 
+				var destFile = Path.Combine(destDir, Path.GetFileName(file));
+				File.Copy(file, destFile, true);
+			}
+
+			foreach (var dir in Directory.GetDirectories(sourceDir))
+			{
+				var destSubDir = Path.Combine(destDir, Path.GetFileName(dir));
+				CopyDirectoryContents(dir, destSubDir);
 			}
 		}
 

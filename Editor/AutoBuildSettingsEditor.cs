@@ -227,10 +227,41 @@ namespace AutoBuildTool.Editor
 			if (file == null) return;
 
 			GUILayout.Space(10);
-			GUILayout.Label("File Editor", EditorStyles.boldLabel);
+			GUILayout.Label("File / Asset Editor", EditorStyles.boldLabel);
 
 			EditorGUI.BeginChangeCheck();
-			EditorGUILayout.PropertyField(file.FindPropertyRelative("Name"));
+			
+			SerializedProperty opTypeProp = file.FindPropertyRelative("OperationType");
+			EditorGUILayout.PropertyField(opTypeProp, new GUIContent("Operation Type"));
+
+			if (opTypeProp.enumValueIndex == (int)FileOperationType.CreateTextFile)
+			{
+				EditorGUILayout.PropertyField(file.FindPropertyRelative("Name"), new GUIContent("File Name"));
+				EditorGUILayout.PropertyField(file.FindPropertyRelative("FileContent"));
+			}
+			else
+			{
+				SerializedProperty sourceAssetProp = file.FindPropertyRelative("SourceAsset");
+				
+				EditorGUI.BeginChangeCheck();
+				EditorGUILayout.PropertyField(sourceAssetProp, new GUIContent("Asset to Copy"));
+				if (EditorGUI.EndChangeCheck())
+				{
+					// Auto-fill the Name field based on the selected asset
+					if (sourceAssetProp.objectReferenceValue != null)
+					{
+						string assetPath = AssetDatabase.GetAssetPath(sourceAssetProp.objectReferenceValue);
+						if (!string.IsNullOrEmpty(assetPath))
+						{
+							file.FindPropertyRelative("Name").stringValue = System.IO.Path.GetFileName(assetPath);
+						}
+					}
+				}
+				
+				EditorGUILayout.PropertyField(file.FindPropertyRelative("Name"), new GUIContent("Destination Name"));
+				EditorGUILayout.HelpBox("Select any file or folder from your project. It will be copied exactly as it is into the build folder. (.meta files are ignored)", MessageType.Info);
+			}
+
 			if (EditorGUI.EndChangeCheck())
 			{
 				serializedObject.ApplyModifiedProperties();
@@ -238,10 +269,8 @@ namespace AutoBuildTool.Editor
 				serverTree.Reload();
 				serializedObject.Update();
 			}
-
-			EditorGUILayout.PropertyField(file.FindPropertyRelative("FileContent"));
 		}
-
+		
 		private void AddRootFolder(SerializedProperty folders)
 		{
 			folders.InsertArrayElementAtIndex(folders.arraySize);

@@ -15,6 +15,8 @@ namespace AutoBuildTool.Editor
 			public          bool                IsFile;
 			public          string              Name;
 			public          string              FileContent;
+			public          int                 OperationType;
+			public          UnityEngine.Object  SourceAsset;
 			public readonly List<ClipboardData> SubFolders = new();
 			public readonly List<ClipboardData> Files      = new();
 		}
@@ -428,7 +430,9 @@ namespace AutoBuildTool.Editor
 
 			if (isFile)
 			{
-				data.FileContent = prop.FindPropertyRelative("FileContent").stringValue;
+				data.FileContent   = prop.FindPropertyRelative("FileContent").stringValue;
+				data.OperationType = prop.FindPropertyRelative("OperationType").enumValueIndex;
+				data.SourceAsset   = prop.FindPropertyRelative("SourceAsset").objectReferenceValue;
 			}
 			else
 			{
@@ -450,7 +454,9 @@ namespace AutoBuildTool.Editor
 
 			if (data.IsFile)
 			{
-				prop.FindPropertyRelative("FileContent").stringValue = data.FileContent;
+				prop.FindPropertyRelative("FileContent").stringValue          = data.FileContent;
+				prop.FindPropertyRelative("OperationType").enumValueIndex     = data.OperationType;
+				prop.FindPropertyRelative("SourceAsset").objectReferenceValue = data.SourceAsset;
 			}
 			else
 			{
