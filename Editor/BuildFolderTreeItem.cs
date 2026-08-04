@@ -1,6 +1,6 @@
 ﻿using UnityEditor.IMGUI.Controls;
 
-namespace ABS
+namespace AutoBuildTool.Editor
 {
 	public class BuildFolderTreeItem : TreeViewItem<int>
 	{

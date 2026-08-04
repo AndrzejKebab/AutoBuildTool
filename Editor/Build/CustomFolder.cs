@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace ABS.Build
+namespace AutoBuildTool.Editor.Build
 {
 	[Serializable]
 	public class CustomFolder

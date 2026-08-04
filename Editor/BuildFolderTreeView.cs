@@ -1,12 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using ABS.Build;
+using AutoBuildTool.Editor.Build;
 using UnityEditor;
 using UnityEditor.IMGUI.Controls;
 using UnityEngine;
 
-namespace ABS
+namespace AutoBuildTool.Editor
 {
 	public class BuildFolderTreeView : TreeView<int>
 	{

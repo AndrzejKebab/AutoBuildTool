@@ -3,7 +3,7 @@ using UnityEditor;
 using UnityEditor.Build.Profile;
 using UnityEngine;
 
-namespace ABS.Build
+namespace AutoBuildTool.Editor.Build
 {
 	public class AutoBuildSettings : ScriptableObject
 	{
@@ -28,41 +28,38 @@ namespace ABS.Build
 		public List<CustomFolder> GetAdditionalServerFolders() => additionalServerFolders;
 		public List<CustomFile> GetAdditionalServerFiles() => additionalServerFiles;
 
-		[InitializeOnLoadMethod]
-		private static void InitializeOnLoad()
-		{
-			GetAutoBuildSettings();	
-		}
+        // REMOVED [InitializeOnLoadMethod] to prevent the asset from destroying itself during recompilation.
 		
 		public static AutoBuildSettings GetAutoBuildSettings()
 		{
+			const string defaultPath = "Assets/Editor/AutoBuildSettings.asset";
+
+			// 1. Try loading by exact path first (Reliable during recompilation)
+			var settings = AssetDatabase.LoadAssetAtPath<AutoBuildSettings>(defaultPath);
+			if (settings != null) return settings;
+
+			// 2. Fallback to FindAssets in case the user moved it manually
 			var guids = AssetDatabase.FindAssets("t:AutoBuildSettings");
-			
 			if (guids.Length > 0)
 			{
-				if (guids.Length > 1)
-				{
-					Debug.LogWarning("Multiple AutoBuildSettings assets found in the project! Using the first one. Please delete the duplicates.");
-				}
-				
+				if (guids.Length > 1) Debug.LogWarning("Multiple AutoBuildSettings assets found! Using the first one.");
 				var path = AssetDatabase.GUIDToAssetPath(guids[0]);
 				return AssetDatabase.LoadAssetAtPath<AutoBuildSettings>(path);
 			}
 
-			var settings = CreateInstance<AutoBuildSettings>();
+			// 3. Create it safely if it truly doesn't exist
+			settings = CreateInstance<AutoBuildSettings>();
 
 			if (!AssetDatabase.IsValidFolder("Assets/Editor"))
 			{
 				AssetDatabase.CreateFolder("Assets", "Editor");
 			}
 
-			const string assetPath = "Assets/Editor/AutoBuildSettings.asset";
-			AssetDatabase.CreateAsset(settings, assetPath);
+			AssetDatabase.CreateAsset(settings, defaultPath);
 			AssetDatabase.SaveAssets();
 			AssetDatabase.Refresh();
 
-			Debug.Log($"Auto-created missing AutoBuildSettings at '{assetPath}'");
-			
+			Debug.Log($"Auto-created missing AutoBuildSettings at '{defaultPath}'");
 			return settings;
 		}
 
@@ -70,7 +67,6 @@ namespace ABS.Build
 		public static void SelectSettings()
 		{
 			AutoBuildSettings settings = GetAutoBuildSettings();
-			
 			Selection.activeObject = settings;
 			EditorGUIUtility.PingObject(settings);
 		}

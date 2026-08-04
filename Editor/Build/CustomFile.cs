@@ -1,7 +1,7 @@
 ﻿using System;
 using UnityEngine;
 
-namespace ABS.Build
+namespace AutoBuildTool.Editor.Build
 {
 	[Serializable]
 	public struct CustomFile

@@ -1,6 +1,6 @@
 {
-    "name": "com.andrzejkebab.abs",
-    "rootNamespace": "ABS",
+    "name": "AndrzejKebab.AutoBuildTool",
+    "rootNamespace": "",
     "references": [],
     "includePlatforms": [
         "Editor"

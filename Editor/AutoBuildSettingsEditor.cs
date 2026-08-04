@@ -1,10 +1,10 @@
 ﻿using System;
-using ABS.Build;
+using AutoBuildTool.Editor.Build;
 using UnityEditor;
 using UnityEditor.IMGUI.Controls;
 using UnityEngine;
 
-namespace ABS
+namespace AutoBuildTool.Editor
 {
 	[CustomEditor(typeof(AutoBuildSettings))]
 	public class AutoBuildSettingsEditor : UnityEditor.Editor
@@ -65,7 +65,16 @@ namespace ABS
 			for (var i = arrayProp.arraySize - 1; i >= 0; i--)
 			{
 				SerializedProperty elem = arrayProp.GetArrayElementAtIndex(i);
-				if (elem.managedReferenceValue == null) arrayProp.DeleteArrayElementAtIndex(i);
+				if (elem.managedReferenceValue == null) 
+				{
+					arrayProp.DeleteArrayElementAtIndex(i);
+				}
+				else
+				{
+					// Optional: Recursively clean sub-folders to prevent corrupted files deeper down the tree
+					SerializedProperty subFolders = elem.FindPropertyRelative("SubFolders");
+					if (subFolders != null) CleanUpNullReferences(subFolders);
+				}
 			}
 		}
 
