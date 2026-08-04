@@ -1,33 +1,30 @@
 ﻿using System;
+using ABS.Build;
+using AutoBuildTool.Editor;
 using AutoBuildTool.Editor.Build;
 using UnityEditor;
 using UnityEditor.IMGUI.Controls;
 using UnityEngine;
 
-namespace AutoBuildTool.Editor
+namespace ABS
 {
 	[CustomEditor(typeof(AutoBuildSettings))]
 	public class AutoBuildSettingsEditor : UnityEditor.Editor
 	{
 		private SerializedProperty  clientFiles;
 		private SerializedProperty  clientFolders;
-		private SerializedProperty  clientProfiles;
 		private BuildFolderTreeView clientTree;
 		private TreeViewState<int>  clientTreeState;
 
 		private SerializedProperty  enableServerBuild;
 		private SerializedProperty  serverFiles;
 		private SerializedProperty  serverFolders;
-		private SerializedProperty  serverProfiles;
 		private BuildFolderTreeView serverTree;
 		private TreeViewState<int>  serverTreeState;
 
 		private void OnEnable()
 		{
 			enableServerBuild = serializedObject.FindProperty("enableServerBuild");
-
-			clientProfiles = serializedObject.FindProperty("clientBuildProfiles");
-			serverProfiles = serializedObject.FindProperty("serverBuildProfiles");
 
 			clientFolders = serializedObject.FindProperty("additionalClientFolders");
 			serverFolders = serializedObject.FindProperty("additionalServerFolders");
@@ -81,8 +78,17 @@ namespace AutoBuildTool.Editor
 		public override void OnInspectorGUI()
 		{
 			serializedObject.Update();
+			
+			var settings = (AutoBuildSettings)target;
+			int clientCount = settings.GetClientBuildProfiles().Count;
+			int serverCount = settings.GetServerBuildProfiles().Count;
+			
+			EditorGUILayout.HelpBox($"Auto-Discovered Profiles:\n• {clientCount} Client Profile(s)\n• {serverCount} Server Profile(s)", MessageType.Info);
+			GUILayout.Space(5);
+			
 			EditorGUILayout.PropertyField(enableServerBuild, new GUIContent("Enable Server Build"));
 			GUILayout.Space(5);
+			
 			DrawClientSection();
 			GUILayout.Space(20);
 			if (enableServerBuild.boolValue)
@@ -104,8 +110,6 @@ namespace AutoBuildTool.Editor
 
 		private void DrawClientSection()
 		{
-			EditorGUILayout.PropertyField(clientProfiles, true);
-
 			GUILayout.Space(10);
 			GUILayout.Label("Client Folder Tree", EditorStyles.boldLabel);
 
@@ -130,8 +134,6 @@ namespace AutoBuildTool.Editor
 
 		private void DrawServerSection()
 		{
-			EditorGUILayout.PropertyField(serverProfiles, true);
-
 			GUILayout.Space(10);
 			GUILayout.Label("Server Folder Tree", EditorStyles.boldLabel);
 

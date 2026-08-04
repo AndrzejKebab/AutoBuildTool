@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using AutoBuildTool.Editor.Build;
 using UnityEditor;
 using UnityEditor.Build.Profile;
@@ -18,8 +19,6 @@ namespace ABS.Build
 		private const string CLIENT_FOLDER = "Client";
 		private const char   VERSION_SEPARATOR = ':';
 		private const char   VERSION_DOT       = '.';
-		
-		// Removed BuildOptions.ShowBuiltPlayer to prevent breaking the batch loop
 
 		#endregion
 
@@ -46,7 +45,6 @@ namespace ABS.Build
 			{
 				int major = 0, minor = 0, patch = 0, build = 0;
 				
-				// Fix: Prevent crash if version string is empty
 				if (string.IsNullOrEmpty(versionString)) return new VersionInfo(0, 0, 0, 0);
 
 				var parts       = versionString.Split(VERSION_SEPARATOR);
@@ -109,38 +107,49 @@ namespace ABS.Build
 			var basePath     = Path.Combine(BUILDS_FOLDER, $"v.{safeVersion}");
 			var autoSettings = AutoBuildSettings.GetAutoBuildSettings();
 
-			if (autoSettings.GetEnableServerBuild())
+			// Store the current profile so we don't mess up the user's Editor state
+			var originalProfile = BuildProfile.GetActiveBuildProfile();
+
+			try
 			{
-				foreach (BuildProfile profile in autoSettings.GetServerBuildProfiles())
+				if (autoSettings.GetEnableServerBuild())
+				{
+					foreach (BuildProfile profile in autoSettings.GetServerBuildProfiles())
+					{
+						if (profile == null) continue;
+						BuildProfileTarget(basePath, SERVER_FOLDER, profile, true, autoSettings.GetAdditionalServerFolders(), autoSettings.GetAdditionalServerFiles());
+					}
+				}
+
+				foreach (BuildProfile profile in autoSettings.GetClientBuildProfiles())
 				{
 					if (profile == null) continue;
-					BuildProfileTarget(basePath, SERVER_FOLDER, profile, true, autoSettings.GetAdditionalServerFolders(), autoSettings.GetAdditionalServerFiles());
+					BuildProfileTarget(basePath, CLIENT_FOLDER, profile, false, autoSettings.GetAdditionalClientFolders(), autoSettings.GetAdditionalClientFiles());
 				}
 			}
-
-			foreach (BuildProfile profile in autoSettings.GetClientBuildProfiles())
+			finally
 			{
-				if (profile == null) continue;
-				BuildProfileTarget(basePath, CLIENT_FOLDER, profile, false, autoSettings.GetAdditionalClientFolders(), autoSettings.GetAdditionalClientFiles());
+				// Safely restore the original profile once the builds finish
+				BuildProfile.SetActiveBuildProfile(originalProfile);
 			}
 
 			Debug.Log($"Build process finished for v.{version}");
-			
-			// Show the folder in OS ONCE after everything is done
 			EditorUtility.RevealInFinder(basePath);
 		}
 
 		private static void BuildProfileTarget(string basePath, string typeFolder, BuildProfile profile, bool isServer, List<CustomFolder> folders, List<CustomFile> files)
 		{
-			// Fix: Using platform string instead of profile.name
-			string platformName = profile.platform.ToString();
+			// CRITICAL FIX: Force the profile to become Active.
+			// Failing to do this in Unity 6 causes script compilation cache issues across different targets.
+			BuildProfile.SetActiveBuildProfile(profile);
+
+			BuildTarget platform = GetBuildTarget(profile);
+			string platformName = platform.ToString();
 			string outputDir = Path.Combine(basePath, typeFolder, platformName);
 			
-			// Fix: Determining actual extension needed for platform
-			string ext = GetExtension(profile.platform);
+			string ext = GetExtension(platform);
 			string exeName = isServer ? $"{PlayerSettings.productName}_Server{ext}" : $"{PlayerSettings.productName}{ext}";
 			
-			// Fix: Platforms like WebGL/iOS output into a folder, not an executable file
 			bool isFolderBuild = string.IsNullOrEmpty(ext);
 			string buildPath = isFolderBuild ? outputDir : Path.Combine(outputDir, exeName);
 
@@ -148,7 +157,8 @@ namespace ABS.Build
 			{
 				buildProfile     = profile,
 				locationPathName = buildPath,
-				options          = BuildOptions.None // No ShowBuiltPlayer here to prevent batch breaking
+				// CleanBuildCache prevents UGUI "Missing LifecycleManagement" caching errors
+				options          = BuildOptions.CleanBuildCache
 			};
 
 			BuildReport report = BuildPipeline.BuildPlayer(buildOptions);
@@ -161,13 +171,20 @@ namespace ABS.Build
 
 			Debug.Log($"Build succeeded: {buildPath}");
 
-			// Fix: WebGL/iOS outputDir is the buildPath, Executables use the parent dir
 			string customFilesDir = isFolderBuild ? buildPath : Path.GetDirectoryName(buildPath);
 			CreateFolderTree(customFilesDir, folders);
 			CreateRootFiles(customFilesDir, files);
 		}
+		
+		private static BuildTarget GetBuildTarget(BuildProfile profile)
+		{
+			var prop = typeof(BuildProfile).GetProperty("buildTarget", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+			if (prop != null) return (BuildTarget)prop.GetValue(profile);
 
-		// Helper method to resolve proper OS extensions dynamically
+			using var so = new SerializedObject(profile);
+			return (BuildTarget)so.FindProperty("m_BuildTarget").intValue;
+		}
+
 		private static string GetExtension(BuildTarget platform)
 		{
 			return platform switch
@@ -177,7 +194,7 @@ namespace ABS.Build
 				BuildTarget.StandaloneOSX => ".app",
 				BuildTarget.StandaloneLinux64 => ".x86_64",
 				BuildTarget.Android => ".apk",
-				_ => "" // Default to empty string for folder builds (WebGL, iOS, etc.)
+				_ => "" 
 			};
 		}
 

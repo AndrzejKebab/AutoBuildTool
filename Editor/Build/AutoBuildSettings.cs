@@ -1,34 +1,48 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using AutoBuildTool.Editor.Build;
 using UnityEditor;
 using UnityEditor.Build.Profile;
 using UnityEngine;
 
-namespace AutoBuildTool.Editor.Build
+namespace ABS.Build
 {
 	public class AutoBuildSettings : ScriptableObject
 	{
 		[SerializeField] private bool enableServerBuild;
+		
 		[Header("Client")] 
-		[SerializeField] private List<BuildProfile> clientBuildProfiles;
 		[SerializeReference] private List<CustomFolder> additionalClientFolders = new();
 		[SerializeField] private List<CustomFile>   additionalClientFiles;
 
 		[Header("Server")] 
-		[SerializeField] private List<BuildProfile> serverBuildProfiles;
 		[SerializeReference] private List<CustomFolder> additionalServerFolders = new();
 		[SerializeField] private List<CustomFile>   additionalServerFiles;
 
 		public bool GetEnableServerBuild() => enableServerBuild;
 	
-		public List<BuildProfile> GetClientBuildProfiles() => clientBuildProfiles;
+		// Dynamically fetch all build profiles that do NOT have "Server" in their name
+		public List<BuildProfile> GetClientBuildProfiles()
+		{
+			return BuildProfile.GetAllBuildProfiles()
+				.Where(p => p != null && p.name.IndexOf("Server", StringComparison.OrdinalIgnoreCase) < 0)
+				.ToList();
+		}
+
 		public List<CustomFolder> GetAdditionalClientFolders() => additionalClientFolders;
 		public List<CustomFile> GetAdditionalClientFiles() => additionalClientFiles;
 
-		public List<BuildProfile> GetServerBuildProfiles() => serverBuildProfiles;
+		// Dynamically fetch all build profiles that DO have "Server" in their name
+		public List<BuildProfile> GetServerBuildProfiles()
+		{
+			return BuildProfile.GetAllBuildProfiles()
+				.Where(p => p != null && p.name.IndexOf("Server", StringComparison.OrdinalIgnoreCase) >= 0)
+				.ToList();
+		}
+
 		public List<CustomFolder> GetAdditionalServerFolders() => additionalServerFolders;
 		public List<CustomFile> GetAdditionalServerFiles() => additionalServerFiles;
-
-        // REMOVED [InitializeOnLoadMethod] to prevent the asset from destroying itself during recompilation.
 		
 		public static AutoBuildSettings GetAutoBuildSettings()
 		{
