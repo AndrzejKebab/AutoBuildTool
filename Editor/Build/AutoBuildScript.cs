@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using UnityEditor;
 using UnityEditor.Build.Profile;
@@ -111,21 +112,18 @@ namespace AutoBuildTool.Editor.Build
 			EditorUtility.SetDirty(autoSettings);
 			AssetDatabase.SaveAssets();
 
-			// Store the current profile so we don't mess up the user's Editor state
 			var originalProfile = BuildProfile.GetActiveBuildProfile();
 
 			try
 			{
 				if (autoSettings.GetEnableServerBuild())
 				{
-					// GetActiveServerProfiles() filters out unchecked profiles
 					foreach (BuildProfile profile in autoSettings.GetActiveServerProfiles())
 					{
 						BuildProfileTarget(basePath, SERVER_FOLDER, profile, true, autoSettings.GetAdditionalServerFolders(), autoSettings.GetAdditionalServerFiles());
 					}
 				}
 
-				// GetActiveClientProfiles() filters out unchecked profiles
 				foreach (BuildProfile profile in autoSettings.GetActiveClientProfiles())
 				{
 					BuildProfileTarget(basePath, CLIENT_FOLDER, profile, false, autoSettings.GetAdditionalClientFolders(), autoSettings.GetAdditionalClientFiles());
@@ -133,18 +131,18 @@ namespace AutoBuildTool.Editor.Build
 			}
 			finally
 			{
-				// Safely restore the original profile once the builds finish
 				BuildProfile.SetActiveBuildProfile(originalProfile);
 			}
+
+			// Clean up old builds if retention is enabled
+			CleanupOldBuilds(autoSettings);
 
 			Debug.Log($"Build process finished for v.{version}");
 			EditorUtility.RevealInFinder(basePath);
 		}
-		
+
 		private static void BuildProfileTarget(string basePath, string typeFolder, BuildProfile profile, bool isServer, List<CustomFolder> folders, List<CustomFile> files)
 		{
-			// CRITICAL FIX: Force the profile to become Active.
-			// Failing to do this in Unity 6 causes script compilation cache issues across different targets.
 			BuildProfile.SetActiveBuildProfile(profile);
 
 			BuildTarget platform = GetBuildTarget(profile);
@@ -161,7 +159,6 @@ namespace AutoBuildTool.Editor.Build
 			{
 				buildProfile     = profile,
 				locationPathName = buildPath,
-				// CleanBuildCache prevents UGUI "Missing LifecycleManagement" caching errors
 				options          = BuildOptions.CleanBuildCache
 			};
 
@@ -180,9 +177,43 @@ namespace AutoBuildTool.Editor.Build
 			CreateRootFiles(customFilesDir, files);
 		}
 		
+		private static void CleanupOldBuilds(AutoBuildSettings settings)
+		{
+			if (!settings.GetEnableBuildRetention()) return;
+			if (!Directory.Exists(BUILDS_FOLDER)) return;
+
+			int maxBuilds = settings.GetMaxBuildsToKeep();
+			if (maxBuilds <= 0) return;
+
+			var dirInfo = new DirectoryInfo(BUILDS_FOLDER);
+			
+			// Get all directories that match our version naming format ("v.*")
+			// Order them descending so the newest are at the beginning (index 0)
+			var buildDirs = dirInfo.GetDirectories("v.*")
+			                       .OrderByDescending(d => d.CreationTime)
+			                       .ToList();
+
+			if (buildDirs.Count > maxBuilds)
+			{
+				// Delete all items starting from index `maxBuilds`
+				for (int i = maxBuilds; i < buildDirs.Count; i++)
+				{
+					try
+					{
+						buildDirs[i].Delete(true);
+						Debug.Log($"Deleted old build to free up space: {buildDirs[i].Name}");
+					}
+					catch (Exception e)
+					{
+						Debug.LogWarning($"Failed to delete old build '{buildDirs[i].Name}'. Make sure it isn't opened by another program.\n{e.Message}");
+					}
+				}
+			}
+		}
+
 		private static BuildTarget GetBuildTarget(BuildProfile profile)
 		{
-			PropertyInfo prop = typeof(BuildProfile).GetProperty("buildTarget", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+			var prop = typeof(BuildProfile).GetProperty("buildTarget", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
 			if (prop != null) return (BuildTarget)prop.GetValue(profile);
 
 			using var so = new SerializedObject(profile);

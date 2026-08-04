@@ -22,8 +22,13 @@ namespace AutoBuildTool.Editor.Build
 
 	public class AutoBuildSettings : ScriptableObject
 	{
+		[Header("General")]
 		[SerializeField] private bool enableServerBuild;
 		
+		[Header("Build Retention")]
+		[SerializeField] private bool enableBuildRetention = false;
+		[SerializeField, Min(1)] private int maxBuildsToKeep = 5;
+
 		[Header("Client")] 
 		[SerializeField] private List<ProfileState> clientProfiles = new();
 		[SerializeReference] private List<CustomFolder> additionalClientFolders = new();
@@ -35,26 +40,28 @@ namespace AutoBuildTool.Editor.Build
 		[SerializeField] private List<CustomFile>   additionalServerFiles;
 
 		public bool GetEnableServerBuild() => enableServerBuild;
+		public bool GetEnableBuildRetention() => enableBuildRetention;
+		public int GetMaxBuildsToKeep() => maxBuildsToKeep;
 
 		// Automatically synchronizes the serialized lists with the actual assets in your project
 		public void SyncProfiles()
 		{
-			List<BuildProfile> allProfiles = BuildProfile.GetAllBuildProfiles().Where(p => p != null).ToList();
+			var allProfiles = BuildProfile.GetAllBuildProfiles().Where(p => p != null).ToList();
 
-			List<BuildProfile> actualClientProfiles = allProfiles.Where(p => p.name.IndexOf("Server", StringComparison.OrdinalIgnoreCase) < 0).ToList();
-			List<BuildProfile> actualServerProfiles = allProfiles.Where(p => p.name.IndexOf("Server", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+			var actualClientProfiles = allProfiles.Where(p => p.name.IndexOf("Server", StringComparison.OrdinalIgnoreCase) < 0).ToList();
+			var actualServerProfiles = allProfiles.Where(p => p.name.IndexOf("Server", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
 
 			SyncList(clientProfiles, actualClientProfiles);
 			SyncList(serverProfiles, actualServerProfiles);
 		}
 
-		private static void SyncList(List<ProfileState> states, List<BuildProfile> actualProfiles)
+		private void SyncList(List<ProfileState> states, List<BuildProfile> actualProfiles)
 		{
 			// Remove any profiles that were deleted from the project
 			states.RemoveAll(s => s.Profile == null || !actualProfiles.Contains(s.Profile));
 
 			// Add any newly created profiles that aren't in the list yet
-			foreach (BuildProfile p in actualProfiles)
+			foreach (var p in actualProfiles)
 			{
 				if (states.All(s => s.Profile != p))
 				{

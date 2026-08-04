@@ -3,7 +3,6 @@ using AutoBuildTool.Editor.Build;
 using UnityEditor;
 using UnityEditor.IMGUI.Controls;
 using UnityEngine;
-using Object = UnityEngine.Object;
 
 namespace AutoBuildTool.Editor
 {
@@ -17,6 +16,9 @@ namespace AutoBuildTool.Editor
 		private TreeViewState<int>  clientTreeState;
 
 		private SerializedProperty  enableServerBuild;
+		private SerializedProperty  enableBuildRetention;
+		private SerializedProperty  maxBuildsToKeep;
+		
 		private SerializedProperty  serverProfiles;
 		private SerializedProperty  serverFiles;
 		private SerializedProperty  serverFolders;
@@ -29,6 +31,8 @@ namespace AutoBuildTool.Editor
 			settings.SyncProfiles(); // Ensure profiles are up to date when the inspector opens
 			
 			enableServerBuild = serializedObject.FindProperty("enableServerBuild");
+			enableBuildRetention = serializedObject.FindProperty("enableBuildRetention");
+			maxBuildsToKeep = serializedObject.FindProperty("maxBuildsToKeep");
 
 			clientProfiles = serializedObject.FindProperty("clientProfiles");
 			serverProfiles = serializedObject.FindProperty("serverProfiles");
@@ -86,6 +90,7 @@ namespace AutoBuildTool.Editor
 		{
 			serializedObject.Update();
 			
+			GUILayout.Label("General Settings", EditorStyles.boldLabel);
 			GUILayout.BeginHorizontal();
 			EditorGUILayout.PropertyField(enableServerBuild, new GUIContent("Enable Server Build"));
 			if (GUILayout.Button("Refresh Profiles", GUILayout.Width(120)))
@@ -93,8 +98,16 @@ namespace AutoBuildTool.Editor
 				((AutoBuildSettings)target).SyncProfiles();
 			}
 			GUILayout.EndHorizontal();
+
+			EditorGUILayout.PropertyField(enableBuildRetention, new GUIContent("Enable Build Retention"));
+			if (enableBuildRetention.boolValue)
+			{
+				EditorGUI.indentLevel++;
+				EditorGUILayout.PropertyField(maxBuildsToKeep, new GUIContent("Max Builds To Keep"));
+				EditorGUI.indentLevel--;
+			}
 			
-			GUILayout.Space(10);
+			GUILayout.Space(15);
 			
 			DrawClientSection();
 			GUILayout.Space(20);
@@ -187,8 +200,8 @@ namespace AutoBuildTool.Editor
 				// Draw Checkbox
 				enabledProp.boolValue = EditorGUILayout.Toggle(enabledProp.boolValue, GUILayout.Width(20));
 				
-				// Draw a read-only object field (allows clicking to ping without allowing overwriting)
-				Object currentProfile = profileProp.objectReferenceValue;
+				// Draw a read-only object field
+				var currentProfile = profileProp.objectReferenceValue;
 				EditorGUILayout.ObjectField(GUIContent.none, currentProfile, typeof(UnityEditor.Build.Profile.BuildProfile), false);
 				
 				GUILayout.EndHorizontal();
