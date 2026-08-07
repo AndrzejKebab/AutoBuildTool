@@ -12,6 +12,9 @@ namespace AutoBuildTool.Editor
 	[CustomEditor(typeof(AutoBuildSettings))]
 	public class AutoBuildSettingsEditor : UnityEditor.Editor
 	{
+		private const float MIN_TREE_HEIGHT = 60f;
+		private const float MAX_TREE_HEIGHT = 400f;
+
 		private SerializedProperty  clientFiles;
 		private SerializedProperty  clientFolders;
 		private SerializedProperty  clientProfiles;
@@ -31,7 +34,9 @@ namespace AutoBuildTool.Editor
 		private void OnEnable()
 		{
 			var settings = (AutoBuildSettings)target;
-			settings.SyncProfiles(); // Ensure profiles are up to date when the inspector opens
+			// Ensure profiles are up to date when the inspector opens. This runs before the first
+			// serializedObject access on purpose, so the cache is built from the synced state.
+			if (settings.SyncProfiles()) EditorUtility.SetDirty(settings);
 
 			enableServerBuild    = serializedObject.FindProperty("enableServerBuild");
 			enableBuildRetention = serializedObject.FindProperty("enableBuildRetention");
@@ -96,7 +101,16 @@ namespace AutoBuildTool.Editor
 			GUILayout.Label("General Settings", EditorStyles.boldLabel);
 			GUILayout.BeginHorizontal();
 			EditorGUILayout.PropertyField(enableServerBuild, new GUIContent("Enable Server Build"));
-			if (GUILayout.Button("Refresh Profiles", GUILayout.Width(120))) ((AutoBuildSettings)target).SyncProfiles();
+			if (GUILayout.Button("Refresh Profiles", GUILayout.Width(120)))
+			{
+				// SyncProfiles mutates the target directly, bypassing serializedObject. Without the
+				// Update() below, the stale cache taken at the top of OnInspectorGUI would be written
+				// straight back by ApplyModifiedProperties and undo the refresh.
+				var settings = (AutoBuildSettings)target;
+				if (settings.SyncProfiles()) EditorUtility.SetDirty(settings);
+				serializedObject.Update();
+			}
+
 			GUILayout.EndHorizontal();
 
 			EditorGUILayout.PropertyField(enableBuildRetention, new GUIContent("Enable Build Retention"));
@@ -109,12 +123,12 @@ namespace AutoBuildTool.Editor
 
 			GUILayout.Space(15);
 
-			DrawClientSection();
+			DrawBuildSection("Client", clientProfiles, clientTree, clientFolders, clientFiles);
 			GUILayout.Space(20);
 			if (enableServerBuild.boolValue)
 			{
 				GUILayout.Space(10);
-				DrawServerSection();
+				DrawBuildSection("Server", serverProfiles, serverTree, serverFolders, serverFiles);
 			}
 			else
 			{
@@ -128,58 +142,34 @@ namespace AutoBuildTool.Editor
 			serializedObject.ApplyModifiedProperties();
 		}
 
-		private void DrawClientSection()
+		private void DrawBuildSection(string label, SerializedProperty profiles, BuildFolderTreeView tree,
+		                              SerializedProperty folders, SerializedProperty files)
 		{
-			GUILayout.Label("Client Target Profiles", EditorStyles.boldLabel);
-			DrawProfileList(clientProfiles);
+			GUILayout.Label($"{label} Target Profiles", EditorStyles.boldLabel);
+			DrawProfileList(profiles);
 
 			GUILayout.Space(15);
-			GUILayout.Label("Client Folder Tree", EditorStyles.boldLabel);
+			GUILayout.Label($"{label} Folder Tree", EditorStyles.boldLabel);
 
 			GUILayout.BeginHorizontal();
 			if (GUILayout.Button("Add Root Folder"))
 			{
-				AddRootFolder(clientFolders);
-				clientTree.Reload();
+				AddRootFolder(folders);
+				tree?.Reload();
 			}
 
 			if (GUILayout.Button("Add Root File"))
 			{
-				AddRootFile(clientFiles);
-				clientTree.Reload();
+				AddRootFile(files);
+				tree?.Reload();
 			}
 
 			GUILayout.EndHorizontal();
 
-			Rect rect = GUILayoutUtility.GetRect(0, 150, GUILayout.ExpandWidth(true));
-			clientTree?.OnGUI(rect);
-		}
-
-		private void DrawServerSection()
-		{
-			GUILayout.Label("Server Target Profiles", EditorStyles.boldLabel);
-			DrawProfileList(serverProfiles);
-
-			GUILayout.Space(15);
-			GUILayout.Label("Server Folder Tree", EditorStyles.boldLabel);
-
-			GUILayout.BeginHorizontal();
-			if (GUILayout.Button("Add Root Folder"))
-			{
-				AddRootFolder(serverFolders);
-				serverTree.Reload();
-			}
-
-			if (GUILayout.Button("Add Root File"))
-			{
-				AddRootFile(serverFiles);
-				serverTree.Reload();
-			}
-
-			GUILayout.EndHorizontal();
-
-			Rect rect = GUILayoutUtility.GetRect(0, 150, GUILayout.ExpandWidth(true));
-			serverTree?.OnGUI(rect);
+			// Grow with the content instead of a fixed 150px (~7 rows), but stay bounded.
+			var  height = tree != null ? Mathf.Clamp(tree.totalHeight, MIN_TREE_HEIGHT, MAX_TREE_HEIGHT) : MIN_TREE_HEIGHT;
+			Rect rect   = GUILayoutUtility.GetRect(0, height, GUILayout.ExpandWidth(true));
+			tree?.OnGUI(rect);
 		}
 
 		private void DrawProfileList(SerializedProperty listProp)
@@ -199,8 +189,8 @@ namespace AutoBuildTool.Editor
 
 				GUILayout.BeginHorizontal();
 
-				// Draw Checkbox
-				enabledProp.boolValue = EditorGUILayout.Toggle(enabledProp.boolValue, GUILayout.Width(20));
+				// Draw Checkbox (PropertyField so the toggle participates in Undo)
+				EditorGUILayout.PropertyField(enabledProp, GUIContent.none, GUILayout.Width(20));
 
 				// Lock the object field so the user cannot modify it
 				EditorGUI.BeginDisabledGroup(true);
@@ -218,10 +208,14 @@ namespace AutoBuildTool.Editor
 
 		private void DrawFileEditor()
 		{
-			BuildFolderTreeItem item = clientTree.GetSelectedItem() ?? serverTree.GetSelectedItem();
+			BuildFolderTreeItem clientItem = clientTree?.GetSelectedItem();
+			BuildFolderTreeItem item       = clientItem ?? serverTree?.GetSelectedItem();
 
 			if (item is not { IsFile: true } || string.IsNullOrEmpty(item.PropertyPath))
 				return;
+
+			// Only the tree that owns the selection needs rebuilding after a rename.
+			BuildFolderTreeView owningTree = clientItem != null ? clientTree : serverTree;
 
 			SerializedProperty file = serializedObject.FindProperty(item.PropertyPath);
 			if (file == null) return;
@@ -263,22 +257,16 @@ namespace AutoBuildTool.Editor
 
 			if (!EditorGUI.EndChangeCheck()) return;
 			serializedObject.ApplyModifiedProperties();
-			clientTree.Reload();
-			serverTree.Reload();
+			owningTree?.Reload();
 			serializedObject.Update();
 		}
 
+		// Both add-paths delegate to the tree view's initialisers so a new field on CustomFile /
+		// CustomFolder only has to be handled in one place.
 		private void AddRootFolder(SerializedProperty folders)
 		{
 			folders.InsertArrayElementAtIndex(folders.arraySize);
-
-			SerializedProperty folder = folders.GetArrayElementAtIndex(folders.arraySize - 1);
-
-			folder.managedReferenceValue = new CustomFolder();
-
-			folder.FindPropertyRelative("Name").stringValue = "New Folder";
-			folder.FindPropertyRelative("Files").ClearArray();
-			folder.FindPropertyRelative("SubFolders").ClearArray();
+			BuildFolderTreeView.ResetFolderElement(folders.GetArrayElementAtIndex(folders.arraySize - 1));
 
 			serializedObject.ApplyModifiedProperties();
 		}
@@ -286,11 +274,7 @@ namespace AutoBuildTool.Editor
 		private void AddRootFile(SerializedProperty files)
 		{
 			files.InsertArrayElementAtIndex(files.arraySize);
-
-			SerializedProperty file = files.GetArrayElementAtIndex(files.arraySize - 1);
-
-			file.FindPropertyRelative("Name").stringValue        = "NewFile.txt";
-			file.FindPropertyRelative("FileContent").stringValue = string.Empty;
+			BuildFolderTreeView.ResetFileElement(files.GetArrayElementAtIndex(files.arraySize - 1));
 
 			serializedObject.ApplyModifiedProperties();
 		}

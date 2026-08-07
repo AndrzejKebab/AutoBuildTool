@@ -7,12 +7,12 @@
 ## 📂 Project Structure
 
 ```
-ABS/Editor/
+Editor/
 ├── Build/
 │   ├── AutoBuildScript.cs      # Main build pipeline
-│   ├── AutoBuildSettings.cs    # ScriptableObject config
+│   ├── AutoBuildSettings.cs    # ScriptableObject config + profile discovery
 │   ├── CustomFolder.cs         # Folder definition
-│   └── CustomFile.cs           # File definition
+│   └── CustomFile.cs           # File / asset-copy definition
 │
 ├── AutoBuildSettingsEditor.cs  # Custom inspector UI
 ├── BuildFolderTreeView.cs      # Tree view logic
@@ -24,7 +24,9 @@ ABS/Editor/
 ## ✨ Features
 
 - **Automated Client & Server Builds**: Build both your client and server sequentially with a single click.
-- **Build Profiles Support**: Easily assign multiple Unity `BuildProfiles` for varying target platforms or configurations.
+- **Automatic Profile Discovery**: All Unity `BuildProfile` assets in the project are found automatically and listed with a per-profile enable checkbox — no manual assignment. Profiles whose name contains `Server` as a whole word are treated as server profiles.
+- **Build Retention**: Optionally keep only the *N* newest build versions, deleting older ones automatically after each successful build.
+- **Copy Project Assets**: Besides generating text files, a post-build entry can copy any existing file or folder from your project into the build output (`.meta` files are skipped).
 - **Custom Post-Build Directories**: Visually design a custom folder hierarchy to be generated inside the build folder.
 - **Custom Post-Build Files**: Automatically create text files (e.g., `README.txt`, configuration `.json`, or `.ini` files) with predefined content using the built-in text editor.
 - **Semantic Versioning**: Automatically bump your project's version (Major, Minor, Patch, or Build) directly from the toolbar. Format: `Major.Minor.Patch:Build`.
@@ -123,28 +125,36 @@ Example:
 * Only **one `AutoBuildSettings` asset** should exist
 * If multiple are found, the first one is used (warning logged)
 * Server build is optional and fully toggleable
-* Uses `BuildOptions.CompressWithLz4HC` for optimized builds
+* No `BuildOptions` are applied — compression and other options come from the Build Profile itself
+* A build aborts (and the version is **not** bumped) if no profiles are enabled
+* Each profile builds in isolation; one failure does not abort the remaining profiles
 
 ---
 
 **Output Structure:**
-Builds are output to a `Builds/` folder in your project root, categorized by the safe version name:
+Builds are output to a `Builds/` folder in your project root, categorized by the safe version name, then by **platform and profile name** — so several profiles targeting the same platform never overwrite each other:
 ```text
 MyProject/
   ├─ Builds/
   │  ├─ v.1.0.0_1/
   │  │  ├─ Client/
-  │  │  │  ├─ MyGame.exe
-  │  │  │  ├─ (Your Custom Folders & Files)
+  │  │  │  ├─ StandaloneWindows64/
+  │  │  │  │  ├─ Client-Release/
+  │  │  │  │  │  ├─ MyGame.exe
+  │  │  │  │  │  ├─ (Your Custom Folders & Files)
+  │  │  │  │  ├─ Client-Dev/
+  │  │  │  │  │  ├─ MyGame.exe
   │  │  ├─ Server/
-  │  │  │  ├─ MyGame_Server.exe
-  │  │  │  ├─ (Your Custom Folders & Files)
+  │  │  │  ├─ StandaloneLinux64/
+  │  │  │  │  ├─ Server-Linux/
+  │  │  │  │  │  ├─ MyGame_Server.x86_64
 ```
 
 ---
 
 ## 🛠️ Technical Notes
-* **Executable Names**: The client .exe defaults to PlayerSettings.productName, while the server appends _Server to the product name.
+* **Executable Names**: The client executable defaults to `PlayerSettings.productName`, while the server appends `_Server`. The extension is derived from the profile's build target (`.exe` Windows, `.x86_64` Linux, `.app` macOS, `.apk` Android); targets that produce a directory rather than a single file (WebGL, iOS) build straight into the profile folder.
+* **Build Retention**: Old build folders are ranked by the version parsed from their name, not by filesystem timestamps, and the build just produced is never a deletion candidate.
 
 ---
 

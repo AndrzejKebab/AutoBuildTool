@@ -8,11 +8,7 @@
   "documentationUrl": "https://github.com/AndrzejKebab/AutoBuildTool/blob/main/README.md",
   "changelogUrl": "",
   "licensesUrl": "https://github.com/AndrzejKebab/AutoBuildTool/blob/main/LICENSE",
-  "dependencies": {
-    "com.unity.burst": "1.8.17",
-    "com.unity.collections": "2.5.1",
-    "com.unity.mathematics": "1.3.2"
-  },
+  "dependencies": {},
   "keywords": [
     "build",
     "automation",
