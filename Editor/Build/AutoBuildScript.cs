@@ -22,7 +22,8 @@ namespace AutoBuildTool.Editor.Build
 		private const char   VERSION_DOT       = '.';
 		private const string VERSION_PREFIX    = "v.";
 
-		// Cached once: this lookup runs per profile per build otherwise.
+		// BuildProfile.buildTarget is not public, so it has to be read reflectively.
+		// Cached once: this lookup would otherwise run per profile per build.
 		private static readonly PropertyInfo BuildTargetProperty =
 			typeof(BuildProfile).GetProperty("buildTarget",
 			                                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
@@ -334,12 +335,29 @@ namespace AutoBuildTool.Editor.Build
 			}
 		}
 
+		// Both the reflected property and the serialized field name are tied to Unity's internals,
+		// so each step falls through rather than throwing. The active build target is a safe last
+		// resort here because the only caller sets this profile active immediately beforehand.
 		private static BuildTarget GetBuildTarget(BuildProfile profile)
 		{
-			if (BuildTargetProperty != null) return (BuildTarget)BuildTargetProperty.GetValue(profile);
+			if (BuildTargetProperty != null)
+				try
+				{
+					return (BuildTarget)BuildTargetProperty.GetValue(profile);
+				}
+				catch (Exception e)
+				{
+					Debug.LogWarning($"[ABS] Could not read BuildProfile.buildTarget reflectively: {e.Message}");
+				}
 
-			using var so = new SerializedObject(profile);
-			return (BuildTarget)so.FindProperty("m_BuildTarget").intValue;
+			using (var so = new SerializedObject(profile))
+			{
+				SerializedProperty targetProp = so.FindProperty("m_BuildTarget");
+				if (targetProp != null) return (BuildTarget)targetProp.intValue;
+			}
+
+			Debug.LogWarning($"[ABS] Could not resolve the build target for profile '{profile.name}'; falling back to the active build target. This Unity version may have renamed BuildProfile's build target member.");
+			return EditorUserBuildSettings.activeBuildTarget;
 		}
 
 		private static string GetExtension(BuildTarget platform)
