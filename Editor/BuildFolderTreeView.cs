@@ -20,8 +20,6 @@ namespace AutoBuildTool.Editor
 		private readonly SerializedObject   so;
 		public           Action             OnSelectionChangedCallback;
 
-		private int idCounter;
-
 		public BuildFolderTreeView(TreeViewState<int> state, SerializedObject so, SerializedProperty folders,
 		                           SerializedProperty files)
 			: base(state)
@@ -41,8 +39,6 @@ namespace AutoBuildTool.Editor
 
 		protected override TreeViewItem<int> BuildRoot()
 		{
-			idCounter = 1;
-
 			var root = new TreeViewItem<int> { id = 0, depth = -1, displayName = "Root" };
 			var rows = new List<TreeViewItem<int>>();
 
@@ -59,12 +55,12 @@ namespace AutoBuildTool.Editor
 					SerializedProperty file     = rootFiles.GetArrayElementAtIndex(i);
 					SerializedProperty nameProp = file.FindPropertyRelative("Name");
 					if (nameProp != null)
-						rows.Add(new BuildFolderTreeItem(idCounter++, 0, nameProp.stringValue, true,
+						rows.Add(new BuildFolderTreeItem(StableId(file.propertyPath), 0, nameProp.stringValue, true,
 						                                 file.propertyPath));
 				}
 
 			if (rows.Count == 0)
-				rows.Add(new BuildFolderTreeItem(idCounter++, 0, "(Empty)", false, string.Empty));
+				rows.Add(new BuildFolderTreeItem(int.MaxValue, 0, "(Empty)", false, string.Empty));
 
 			SetupParentsAndChildrenFromDepths(root, rows);
 			return root;
@@ -77,7 +73,7 @@ namespace AutoBuildTool.Editor
 
 			var name = nameProp.stringValue;
 
-			rows.Add(new BuildFolderTreeItem(idCounter++, depth, name, false, path));
+			rows.Add(new BuildFolderTreeItem(StableId(path), depth, name, false, path));
 
 			SerializedProperty files = folder.FindPropertyRelative("Files");
 			if (files != null)
@@ -87,7 +83,7 @@ namespace AutoBuildTool.Editor
 					SerializedProperty fileNameProp = file.FindPropertyRelative("Name");
 					if (fileNameProp != null)
 						rows.Add(new BuildFolderTreeItem(
-						                                 idCounter++,
+						                                 StableId(file.propertyPath),
 						                                 depth + 1,
 						                                 fileNameProp.stringValue,
 						                                 true,
@@ -127,6 +123,31 @@ namespace AutoBuildTool.Editor
 		private BuildFolderTreeItem GetItem(int id)
 		{
 			return FindItem(id, rootItem) as BuildFolderTreeItem;
+		}
+
+		// The element's own index is the LAST bracket in the path. Reading the first bracket
+		// returns an ancestor's index, which resolves to the wrong sibling for nested items.
+		private static int GetElementIndex(string propertyPath)
+		{
+			if (string.IsNullOrEmpty(propertyPath)) return -1;
+
+			var open  = propertyPath.LastIndexOf('[');
+			var close = propertyPath.LastIndexOf(']');
+			if (open < 0 || close < open) return -1;
+
+			return int.TryParse(propertyPath.Substring(open + 1, close - open - 1), out var index) ? index : -1;
+		}
+
+		// Derived from the property path so a stored selection still resolves to the same element
+		// after Reload(); a traversal-order counter would remap selections on any structural change.
+		private static int StableId(string propertyPath)
+		{
+			unchecked
+			{
+				var hash = 5381;
+				foreach (var c in propertyPath) hash = (hash * 33) ^ c;
+				return hash == 0 ? 1 : hash;
+			}
 		}
 
 		public BuildFolderTreeItem GetSelectedItem()
@@ -182,8 +203,9 @@ namespace AutoBuildTool.Editor
 
 			if (item != null)
 			{
+				// A stale PropertyPath resolves to null after a structural change.
 				SerializedProperty prop = so.FindProperty(item.PropertyPath);
-				prop.FindPropertyRelative("Name").stringValue = args.newName;
+				if (prop != null) prop.FindPropertyRelative("Name").stringValue = args.newName;
 			}
 
 			so.ApplyModifiedProperties();
@@ -265,12 +287,7 @@ namespace AutoBuildTool.Editor
 			var index = folders.arraySize;
 			folders.InsertArrayElementAtIndex(index);
 
-			SerializedProperty folder = folders.GetArrayElementAtIndex(index);
-			folder.managedReferenceValue = new CustomFolder();
-
-			folder.FindPropertyRelative("Name").stringValue = "New Folder";
-			folder.FindPropertyRelative("Files").ClearArray();
-			folder.FindPropertyRelative("SubFolders").ClearArray();
+			ResetFolderElement(folders.GetArrayElementAtIndex(index));
 
 			so.ApplyModifiedProperties();
 			Reload();
@@ -286,13 +303,31 @@ namespace AutoBuildTool.Editor
 			var index = files.arraySize;
 			files.InsertArrayElementAtIndex(index);
 
-			SerializedProperty file = files.GetArrayElementAtIndex(index);
-
-			file.FindPropertyRelative("Name").stringValue        = "NewFile.txt";
-			file.FindPropertyRelative("FileContent").stringValue = "";
+			ResetFileElement(files.GetArrayElementAtIndex(index));
 
 			so.ApplyModifiedProperties();
 			Reload();
+		}
+
+		// CustomFile is a struct, and InsertArrayElementAtIndex duplicates the preceding element
+		// rather than zero-initialising it. Every field must be reset explicitly or a new entry
+		// silently inherits the previous one's operation type and source asset.
+		internal static void ResetFileElement(SerializedProperty file)
+		{
+			file.FindPropertyRelative("Name").stringValue                 = "NewFile.txt";
+			file.FindPropertyRelative("FileContent").stringValue          = string.Empty;
+			file.FindPropertyRelative("OperationType").enumValueIndex     = (int)FileOperationType.CreateTextFile;
+			file.FindPropertyRelative("SourceAsset").objectReferenceValue = null;
+		}
+
+		// Shared with the inspector's "Add Root Folder" button so both paths stay in step.
+		internal static void ResetFolderElement(SerializedProperty folder)
+		{
+			folder.managedReferenceValue = new CustomFolder();
+
+			folder.FindPropertyRelative("Name").stringValue = "New Folder";
+			folder.FindPropertyRelative("Files").ClearArray();
+			folder.FindPropertyRelative("SubFolders").ClearArray();
 		}
 
 		private void DuplicateSelection()
@@ -309,7 +344,8 @@ namespace AutoBuildTool.Editor
 				var parentPath = item.PropertyPath[..item.PropertyPath.LastIndexOf(".Array", StringComparison.Ordinal)];
 				SerializedProperty parent = so.FindProperty(parentPath);
 
-				var index = int.Parse(item.PropertyPath.Split('[', ']')[1]);
+				var index = GetElementIndex(item.PropertyPath);
+				if (index < 0) continue;
 
 				ClipboardData originalData = CopyPropertyToData(parent.GetArrayElementAtIndex(index), item.IsFile);
 
@@ -339,7 +375,8 @@ namespace AutoBuildTool.Editor
 				var parentPath = item.PropertyPath[..item.PropertyPath.LastIndexOf(".Array", StringComparison.Ordinal)];
 				SerializedProperty parent = so.FindProperty(parentPath);
 
-				var index = int.Parse(item.PropertyPath.Split('[', ']')[1]);
+				var index = GetElementIndex(item.PropertyPath);
+				if (index < 0) continue;
 				parent.DeleteArrayElementAtIndex(index);
 			}
 

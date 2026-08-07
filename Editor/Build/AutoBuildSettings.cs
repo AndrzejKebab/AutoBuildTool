@@ -13,6 +13,9 @@ namespace AutoBuildTool.Editor.Build
 		public BuildProfile Profile;
 		public bool         IsEnabled;
 
+		// Unity's serializer needs a parameterless constructor to rebuild list elements.
+		public ProfileState() : this(null) { }
+
 		public ProfileState(BuildProfile profile)
 		{
 			Profile   = profile;
@@ -22,6 +25,8 @@ namespace AutoBuildTool.Editor.Build
 
 	public class AutoBuildSettings : ScriptableObject
 	{
+		private const string SERVER_KEYWORD = "Server";
+
 		[Header("General")] [SerializeField] private bool enableServerBuild;
 
 		[Header("Build Retention")] [SerializeField]
@@ -54,33 +59,55 @@ namespace AutoBuildTool.Editor.Build
 			return maxBuildsToKeep;
 		}
 
-		// Automatically synchronizes the serialized lists with the actual assets in your project
-		public void SyncProfiles()
+		// Automatically synchronizes the serialized lists with the actual assets in your project.
+		// Returns true when anything changed, so callers know whether the asset needs saving.
+		public bool SyncProfiles()
 		{
 			List<BuildProfile> allProfiles = BuildProfile.GetAllBuildProfiles().Where(p => p != null).ToList();
 
-			List<BuildProfile> actualClientProfiles = allProfiles
-			                                          .Where(p => p.name.IndexOf("Server",
-				                                                       StringComparison.OrdinalIgnoreCase) <
-			                                                      0).ToList();
-			List<BuildProfile> actualServerProfiles = allProfiles
-			                                          .Where(p => p.name.IndexOf("Server",
-				                                                       StringComparison.OrdinalIgnoreCase) >= 0)
-			                                          .ToList();
+			List<BuildProfile> actualServerProfiles = allProfiles.Where(p => IsServerProfile(p.name)).ToList();
+			List<BuildProfile> actualClientProfiles = allProfiles.Where(p => !IsServerProfile(p.name)).ToList();
 
-			SyncList(clientProfiles, actualClientProfiles);
-			SyncList(serverProfiles, actualServerProfiles);
+			var changed = SyncList(clientProfiles, actualClientProfiles);
+			changed |= SyncList(serverProfiles, actualServerProfiles);
+
+			return changed;
 		}
 
-		private static void SyncList(List<ProfileState> states, List<BuildProfile> actualProfiles)
+		// Matches "Server" only as a whole word, so names that merely contain the letters -
+		// "Observer", "Serverless" - are not misclassified as server profiles.
+		private static bool IsServerProfile(string profileName)
+		{
+			if (string.IsNullOrEmpty(profileName)) return false;
+
+			var index = 0;
+			while ((index = profileName.IndexOf(SERVER_KEYWORD, index, StringComparison.OrdinalIgnoreCase)) >= 0)
+			{
+				var after         = index + SERVER_KEYWORD.Length;
+				var boundedBefore = index == 0 || !char.IsLetter(profileName[index - 1]);
+				var boundedAfter  = after >= profileName.Length || !char.IsLower(profileName[after]);
+
+				if (boundedBefore && boundedAfter) return true;
+				index = after;
+			}
+
+			return false;
+		}
+
+		private static bool SyncList(List<ProfileState> states, List<BuildProfile> actualProfiles)
 		{
 			// Remove any profiles that were deleted from the project
-			states.RemoveAll(s => s.Profile == null || !actualProfiles.Contains(s.Profile));
+			var changed = states.RemoveAll(s => s.Profile == null || !actualProfiles.Contains(s.Profile)) > 0;
 
 			// Add any newly created profiles that aren't in the list yet
 			foreach (BuildProfile p in actualProfiles)
 				if (states.All(s => s.Profile != p))
+				{
 					states.Add(new ProfileState(p));
+					changed = true;
+				}
+
+			return changed;
 		}
 
 		public List<BuildProfile> GetActiveClientProfiles()
