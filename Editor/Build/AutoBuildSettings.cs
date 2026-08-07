@@ -107,6 +107,12 @@ namespace AutoBuildTool.Editor.Build
 					changed = true;
 				}
 
+			// Discovery order is not stable across sessions; sort so the inspector list does not
+			// reshuffle underneath the enable checkboxes.
+			List<BuildProfile> before = states.Select(s => s.Profile).ToList();
+			states.Sort((x, y) => string.Compare(x.Profile.name, y.Profile.name, StringComparison.OrdinalIgnoreCase));
+			if (!states.Select(s => s.Profile).SequenceEqual(before)) changed = true;
+
 			return changed;
 		}
 

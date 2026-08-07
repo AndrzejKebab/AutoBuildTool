@@ -11,8 +11,12 @@ namespace AutoBuildTool.Editor
 {
 	public class BuildFolderTreeView : TreeView<int>
 	{
+		// Static on purpose: sharing one clipboard between the client and server trees is what
+		// makes copying a folder from one side and pasting it into the other work.
 		private static readonly List<ClipboardData> clipboard = new();
-		private readonly        Texture             fileIcon;
+
+		private readonly HashSet<int> usedIds = new();
+		private readonly Texture      fileIcon;
 
 		private readonly Texture            folderIcon;
 		private readonly SerializedProperty rootFiles;
@@ -39,6 +43,8 @@ namespace AutoBuildTool.Editor
 
 		protected override TreeViewItem<int> BuildRoot()
 		{
+			usedIds.Clear();
+
 			var root = new TreeViewItem<int> { id = 0, depth = -1, displayName = "Root" };
 			var rows = new List<TreeViewItem<int>>();
 
@@ -140,14 +146,72 @@ namespace AutoBuildTool.Editor
 
 		// Derived from the property path so a stored selection still resolves to the same element
 		// after Reload(); a traversal-order counter would remap selections on any structural change.
-		private static int StableId(string propertyPath)
+		// Ids must stay unique for TreeView, so a collision probes to the next free value.
+		private int StableId(string propertyPath)
 		{
 			unchecked
 			{
 				var hash = 5381;
 				foreach (var c in propertyPath) hash = (hash * 33) ^ c;
-				return hash == 0 ? 1 : hash;
+
+				// 0 is the root and int.MaxValue is the placeholder row.
+				while (hash == 0 || hash == int.MaxValue || !usedIds.Add(hash)) hash++;
+
+				return hash;
 			}
+		}
+
+		// Positions of two elements in the serialized data, parents before their contents.
+		private static int CompareDocumentOrder(string pathA, string pathB)
+		{
+			List<int> indicesA = GetPathIndices(pathA);
+			List<int> indicesB = GetPathIndices(pathB);
+
+			var shared = Math.Min(indicesA.Count, indicesB.Count);
+			for (var i = 0; i < shared; i++)
+				if (indicesA[i] != indicesB[i])
+					return indicesA[i].CompareTo(indicesB[i]);
+
+			// Same prefix: the deeper path is nested inside the shallower one.
+			return indicesA.Count != indicesB.Count
+				       ? indicesA.Count.CompareTo(indicesB.Count)
+				       : string.CompareOrdinal(pathA, pathB);
+		}
+
+		private static List<int> GetPathIndices(string propertyPath)
+		{
+			var indices = new List<int>();
+			if (string.IsNullOrEmpty(propertyPath)) return indices;
+
+			for (var i = 0; i < propertyPath.Length; i++)
+			{
+				if (propertyPath[i] != '[') continue;
+
+				var close = propertyPath.IndexOf(']', i + 1);
+				if (close < 0) break;
+
+				if (int.TryParse(propertyPath.Substring(i + 1, close - i - 1), out var value)) indices.Add(value);
+				i = close;
+			}
+
+			return indices;
+		}
+
+		// Selected items ordered by position in the serialized data. Mutating operations must run
+		// in reverse: touching an array shifts the indices of everything after it, and removing a
+		// folder invalidates every path nested inside it. Ordering by id would only work while ids
+		// were assigned in traversal order.
+		private List<BuildFolderTreeItem> GetSelectedItems(bool reverse)
+		{
+			List<BuildFolderTreeItem> items = GetSelection()
+			                                  .Select(id => FindItem(id, rootItem) as BuildFolderTreeItem)
+			                                  .Where(i => i != null && !string.IsNullOrEmpty(i.PropertyPath))
+			                                  .ToList();
+
+			items.Sort((a, b) => CompareDocumentOrder(a.PropertyPath, b.PropertyPath));
+			if (reverse) items.Reverse();
+
+			return items;
 		}
 
 		public BuildFolderTreeItem GetSelectedItem()
@@ -334,15 +398,11 @@ namespace AutoBuildTool.Editor
 		{
 			so.Update();
 
-			List<int> selection = GetSelection().ToList();
-			selection.Sort();
-			selection.Reverse();
-
-			foreach (var id in selection)
+			foreach (BuildFolderTreeItem item in GetSelectedItems(true))
 			{
-				if (FindItem(id, rootItem) is not BuildFolderTreeItem item) continue;
 				var parentPath = item.PropertyPath[..item.PropertyPath.LastIndexOf(".Array", StringComparison.Ordinal)];
 				SerializedProperty parent = so.FindProperty(parentPath);
+				if (parent == null) continue;
 
 				var index = GetElementIndex(item.PropertyPath);
 				if (index < 0) continue;
@@ -365,15 +425,11 @@ namespace AutoBuildTool.Editor
 		{
 			so.Update();
 
-			List<int> selection = GetSelection().ToList();
-			selection.Sort();
-			selection.Reverse();
-
-			foreach (var id in selection)
+			foreach (BuildFolderTreeItem item in GetSelectedItems(true))
 			{
-				if (FindItem(id, rootItem) is not BuildFolderTreeItem item) continue;
 				var parentPath = item.PropertyPath[..item.PropertyPath.LastIndexOf(".Array", StringComparison.Ordinal)];
 				SerializedProperty parent = so.FindProperty(parentPath);
+				if (parent == null) continue;
 
 				var index = GetElementIndex(item.PropertyPath);
 				if (index < 0) continue;
@@ -387,11 +443,9 @@ namespace AutoBuildTool.Editor
 		private void CopySelection()
 		{
 			clipboard.Clear();
-			foreach (var id in GetSelection())
+			// Document order, so a multi-selection pastes back in the order it appears on screen.
+			foreach (BuildFolderTreeItem item in GetSelectedItems(false))
 			{
-				if (FindItem(id, rootItem) is not BuildFolderTreeItem item ||
-				    string.IsNullOrEmpty(item.PropertyPath)) continue;
-
 				SerializedProperty prop = so.FindProperty(item.PropertyPath);
 				if (prop != null) clipboard.Add(CopyPropertyToData(prop, item.IsFile));
 			}
@@ -555,6 +609,8 @@ namespace AutoBuildTool.Editor
 							DeleteSelection();
 							e.Use();
 							break;
+						// The context menu advertises F2; R is kept as the existing shortcut.
+						case KeyCode.F2:
 						case KeyCode.R:
 							BeginRename(item);
 							e.Use();

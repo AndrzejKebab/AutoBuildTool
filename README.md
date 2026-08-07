@@ -84,7 +84,7 @@ Use the **Folder Tree** section to construct the directories and files that shou
 |--------------------| ---------- |
 | `Ctrl + N`         | New File   |
 | `Ctrl + Shift + N` | New Folder |
-| `R`                | Rename     |
+| `R` or `F2`        | Rename     |
 | `Delete`           | Delete     |
 | `Ctrl + C`         | Copy       |
 | `Ctrl + V`         | Paste      |
