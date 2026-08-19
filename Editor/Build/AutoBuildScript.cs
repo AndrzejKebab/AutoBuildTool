@@ -170,11 +170,20 @@ namespace AutoBuildTool.Editor.Build
 				AssetDatabase.SaveAssets();
 			}
 
-			var                serverEnabled = autoSettings.GetEnableServerBuild();
-			List<BuildProfile> clientTargets = autoSettings.GetActiveClientProfiles();
-			List<BuildProfile> serverTargets = serverEnabled
-				                                   ? autoSettings.GetActiveServerProfiles()
-				                                   : new List<BuildProfile>();
+			var serverEnabled = autoSettings.GetEnableServerBuild();
+
+			// Captured as handles, not live references: building one profile can switch the active
+			// build target (e.g. dedicated server vs standalone), which triggers a recompile and
+			// asset reimport. That can invalidate an already-loaded BuildProfile's native object
+			// ("fake null" via Object's == overload) even though the CLR reference stays non-null,
+			// which previously surfaced as "profile reference is missing" on the build after a
+			// target switch. Resolving fresh from the asset path right before each build avoids it.
+			List<ProfileHandle> clientTargets = autoSettings.GetActiveClientProfiles()
+			                                                .Select(p => new ProfileHandle(p)).ToList();
+			List<ProfileHandle> serverTargets = serverEnabled
+				                                    ? autoSettings.GetActiveServerProfiles()
+				                                              .Select(p => new ProfileHandle(p)).ToList()
+				                                    : new List<ProfileHandle>();
 
 			// Validate before bumping: an empty target list must not consume a version number.
 			if (clientTargets.Count == 0 && serverTargets.Count == 0)
@@ -195,27 +204,29 @@ namespace AutoBuildTool.Editor.Build
 			var buildDirName = $"{VERSION_PREFIX}{safeVersion}";
 			var basePath     = Path.Combine(BUILDS_FOLDER, buildDirName);
 
-			var originalProfile = BuildProfile.GetActiveBuildProfile();
-			var failures        = new List<string>();
-			var succeeded       = 0;
+			ProfileHandle? originalHandle = ProfileHandle.From(BuildProfile.GetActiveBuildProfile());
+			var            failures      = new List<string>();
+			var            succeeded     = 0;
 
 			try
 			{
-				foreach (BuildProfile profile in serverTargets)
-					if (TryBuildProfile(basePath, SERVER_FOLDER, profile, true,
+				foreach (ProfileHandle handle in serverTargets)
+					if (TryBuildProfile(basePath, SERVER_FOLDER, handle, true,
 					                    autoSettings.GetAdditionalServerFolders(),
 					                    autoSettings.GetAdditionalServerFiles(), failures))
 						succeeded++;
 
-				foreach (BuildProfile profile in clientTargets)
-					if (TryBuildProfile(basePath, CLIENT_FOLDER, profile, false,
+				foreach (ProfileHandle handle in clientTargets)
+					if (TryBuildProfile(basePath, CLIENT_FOLDER, handle, false,
 					                    autoSettings.GetAdditionalClientFolders(),
 					                    autoSettings.GetAdditionalClientFiles(), failures))
 						succeeded++;
 			}
 			finally
 			{
-				BuildProfile.SetActiveBuildProfile(originalProfile);
+				// Re-resolved for the same reason as the build targets: the original active profile
+				// can go stale across the batch too, and restoring a fake-null reference is a no-op.
+				BuildProfile.SetActiveBuildProfile(originalHandle?.Resolve());
 			}
 
 			if (failures.Count > 0)
@@ -234,13 +245,39 @@ namespace AutoBuildTool.Editor.Build
 			EditorUtility.RevealInFinder(basePath);
 		}
 
+		// Identifies a BuildProfile by asset path rather than holding the live reference, so it can
+		// be re-resolved after a platform switch invalidates an already-loaded instance. See the
+		// comment above the target lists in BuildBoth for why that matters.
+		private readonly struct ProfileHandle
+		{
+			public readonly string AssetPath;
+			public readonly string Name;
+
+			public ProfileHandle(BuildProfile profile)
+			{
+				AssetPath = AssetDatabase.GetAssetPath(profile);
+				Name      = profile.name;
+			}
+
+			public static ProfileHandle? From(BuildProfile profile)
+			{
+				return profile == null ? null : new ProfileHandle(profile);
+			}
+
+			public BuildProfile Resolve()
+			{
+				return string.IsNullOrEmpty(AssetPath) ? null : AssetDatabase.LoadAssetAtPath<BuildProfile>(AssetPath);
+			}
+		}
+
 		// Isolates a single profile so one failure cannot abort the remaining profiles in the batch.
-		private static bool TryBuildProfile(string basePath, string typeFolder, BuildProfile profile, bool isServer,
+		private static bool TryBuildProfile(string basePath, string typeFolder, ProfileHandle handle, bool isServer,
 		                                    List<CustomFolder> folders, List<CustomFile> files, List<string> failures)
 		{
+			BuildProfile profile = handle.Resolve();
 			if (profile == null)
 			{
-				failures.Add($"{typeFolder}/<null>: profile reference is missing.");
+				failures.Add($"{typeFolder}/{handle.Name}: profile could not be resolved (deleted, or invalidated by a platform switch mid-batch).");
 				return false;
 			}
 
