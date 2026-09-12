@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEditor.Build.Profile;
 using UnityEditor.Build.Reporting;
@@ -297,6 +298,7 @@ namespace AutoBuildTool.Editor.Build
 		                                       List<CustomFolder> folders, List<CustomFile> files)
 		{
 			BuildProfile.SetActiveBuildProfile(profile);
+			WarnIfProfileVersionOverrideMismatches(profile, PlayerSettings.bundleVersion);
 
 			BuildTarget platform     = GetBuildTarget(profile);
 			var         platformName = platform.ToString();
@@ -395,6 +397,46 @@ namespace AutoBuildTool.Editor.Build
 
 			Debug.LogWarning($"[ABS] Could not resolve the build target for profile '{profile.name}'; falling back to the active build target. This Unity version may have renamed BuildProfile's build target member.");
 			return EditorUserBuildSettings.activeBuildTarget;
+		}
+
+		// Build Profiles can override a subset of Player Settings (Company Name, Product Name,
+		// Version, Default Icon, ...). BumpVersion only ever touches the project-wide
+		// PlayerSettings.bundleVersion, so a profile with its own Version override keeps whatever
+		// value it last had - it never drifts back into sync, and the build silently embeds that
+		// stale version instead of the one just bumped.
+		//
+		// Unity does not expose a small, stable public API for reading this override (the same
+		// reason buildTarget above needs reflection), and this feature is new enough in Unity 6.2
+		// that the internal field names are not something to guess and write into blind - a wrong
+		// guess risks corrupting the profile asset. Instead this scans the profile's own serialized
+		// data for any version-shaped string field and flags a mismatch, so it is visible in the
+		// console rather than silently baked into the player. It is read-only: nothing is written.
+		private static readonly Regex VersionLikePattern = new(@"^\d+(\.\d+){1,3}(:\d+)?$", RegexOptions.Compiled);
+
+		private static void WarnIfProfileVersionOverrideMismatches(BuildProfile profile, string currentVersion)
+		{
+			try
+			{
+				using var          so = new SerializedObject(profile);
+				SerializedProperty it = so.GetIterator();
+
+				while (it.NextVisible(true))
+				{
+					if (it.propertyType != SerializedPropertyType.String) continue;
+					if (it.name.IndexOf("version", StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+					var overrideVersion = it.stringValue;
+					if (string.IsNullOrEmpty(overrideVersion) || overrideVersion == currentVersion) continue;
+					if (!VersionLikePattern.IsMatch(overrideVersion)) continue;
+
+					Debug.LogWarning($"[ABS] Profile '{profile.name}' has its own '{it.propertyPath}' ('{overrideVersion}'), which differs from the project version just bumped to '{currentVersion}'. If this profile overrides Player Settings, the build will embed its own version instead of the project's. Check the profile's Player Settings Overrides and update or disable it if this is unintended.");
+					return; // one warning per profile is enough
+				}
+			}
+			catch (Exception e)
+			{
+				Debug.LogWarning($"[ABS] Could not check profile '{profile.name}' for a Player Settings version override: {e.Message}");
+			}
 		}
 
 		private static string GetExtension(BuildTarget platform)
