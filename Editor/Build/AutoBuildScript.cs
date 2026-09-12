@@ -4,7 +4,6 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
-using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEditor.Build.Profile;
 using UnityEditor.Build.Reporting;
@@ -199,26 +198,40 @@ namespace AutoBuildTool.Editor.Build
 			if (serverEnabled && serverTargets.Count == 0)
 				Debug.LogWarning("[ABS] Server build is enabled but no server profiles are enabled. Skipping server builds.");
 
+			ProfileHandle? originalHandle = ProfileHandle.From(BuildProfile.GetActiveBuildProfile());
+
+			// A Build Profile with its own Player Settings override transparently redirects the
+			// static PlayerSettings API (PlayerSettings.bundleVersion included) to its own copy of
+			// Player Settings while it is the active profile - see BuildProfile.
+			// UpdateGlobalManagerPlayerSettings, which calls PlayerSettings.
+			// SetOverridePlayerSettingsInternal(this.m_PlayerSettings) whenever this profile is
+			// active and has an override. Whatever profile the editor already had active before
+			// this menu command ran is still active here, so reading/writing bundleVersion without
+			// clearing it first can silently hit that profile's override instead of
+			// ProjectSettings.asset - which is exactly how a profile's own version can drift out of
+			// sync with the project version with every bump. SetActiveBuildProfile(null) is cheap:
+			// it only clears BuildProfileContext.activeProfile and returns, no platform switch.
+			BuildProfile.SetActiveBuildProfile(null);
+
 			BumpVersion(bumpType);
 			var version      = PlayerSettings.bundleVersion;
 			var safeVersion  = version.Replace(VERSION_SEPARATOR, '_');
 			var buildDirName = $"{VERSION_PREFIX}{safeVersion}";
 			var basePath     = Path.Combine(BUILDS_FOLDER, buildDirName);
 
-			ProfileHandle? originalHandle = ProfileHandle.From(BuildProfile.GetActiveBuildProfile());
-			var            failures      = new List<string>();
-			var            succeeded     = 0;
+			var failures  = new List<string>();
+			var succeeded = 0;
 
 			try
 			{
 				foreach (ProfileHandle handle in serverTargets)
-					if (TryBuildProfile(basePath, SERVER_FOLDER, handle, true,
+					if (TryBuildProfile(basePath, SERVER_FOLDER, handle, true, version,
 					                    autoSettings.GetAdditionalServerFolders(),
 					                    autoSettings.GetAdditionalServerFiles(), failures))
 						succeeded++;
 
 				foreach (ProfileHandle handle in clientTargets)
-					if (TryBuildProfile(basePath, CLIENT_FOLDER, handle, false,
+					if (TryBuildProfile(basePath, CLIENT_FOLDER, handle, false, version,
 					                    autoSettings.GetAdditionalClientFolders(),
 					                    autoSettings.GetAdditionalClientFiles(), failures))
 						succeeded++;
@@ -273,7 +286,8 @@ namespace AutoBuildTool.Editor.Build
 
 		// Isolates a single profile so one failure cannot abort the remaining profiles in the batch.
 		private static bool TryBuildProfile(string basePath, string typeFolder, ProfileHandle handle, bool isServer,
-		                                    List<CustomFolder> folders, List<CustomFile> files, List<string> failures)
+		                                    string version, List<CustomFolder> folders, List<CustomFile> files,
+		                                    List<string> failures)
 		{
 			BuildProfile profile = handle.Resolve();
 			if (profile == null)
@@ -284,7 +298,7 @@ namespace AutoBuildTool.Editor.Build
 
 			try
 			{
-				return BuildProfileTarget(basePath, typeFolder, profile, isServer, folders, files);
+				return BuildProfileTarget(basePath, typeFolder, profile, isServer, version, folders, files);
 			}
 			catch (Exception e)
 			{
@@ -295,10 +309,10 @@ namespace AutoBuildTool.Editor.Build
 		}
 
 		private static bool BuildProfileTarget(string basePath, string typeFolder, BuildProfile profile, bool isServer,
-		                                       List<CustomFolder> folders, List<CustomFile> files)
+		                                       string version, List<CustomFolder> folders, List<CustomFile> files)
 		{
 			BuildProfile.SetActiveBuildProfile(profile);
-			WarnIfProfileVersionOverrideMismatches(profile, PlayerSettings.bundleVersion);
+			SyncProfileVersionOverride(profile, version);
 
 			BuildTarget platform     = GetBuildTarget(profile);
 			var         platformName = platform.ToString();
@@ -399,44 +413,23 @@ namespace AutoBuildTool.Editor.Build
 			return EditorUserBuildSettings.activeBuildTarget;
 		}
 
-		// Build Profiles can override a subset of Player Settings (Company Name, Product Name,
-		// Version, Default Icon, ...). BumpVersion only ever touches the project-wide
-		// PlayerSettings.bundleVersion, so a profile with its own Version override keeps whatever
-		// value it last had - it never drifts back into sync, and the build silently embeds that
-		// stale version instead of the one just bumped.
-		//
-		// Unity does not expose a small, stable public API for reading this override (the same
-		// reason buildTarget above needs reflection), and this feature is new enough in Unity 6.2
-		// that the internal field names are not something to guess and write into blind - a wrong
-		// guess risks corrupting the profile asset. Instead this scans the profile's own serialized
-		// data for any version-shaped string field and flags a mismatch, so it is visible in the
-		// console rather than silently baked into the player. It is read-only: nothing is written.
-		private static readonly Regex VersionLikePattern = new(@"^\d+(\.\d+){1,3}(:\d+)?$", RegexOptions.Compiled);
-
-		private static void WarnIfProfileVersionOverrideMismatches(BuildProfile profile, string currentVersion)
+		// A Build Profile with its own Player Settings override keeps its own copy of Version.
+		// PlayerSettings.bundleVersion transparently reads/writes that copy while this profile is
+		// active (see the comment above BuildBoth's SetActiveBuildProfile(null) call), and BumpVersion
+		// only ever runs while the project-wide settings are active - so a profile's own override
+		// never gets the bump on its own and would otherwise silently build with a stale version
+		// forever, drifting further from the project version with every release. This uses only the
+		// public bundleVersion property, which resolves to whichever copy is actually in effect for
+		// this profile right now - the same one the build itself is about to embed - so there is no
+		// need to guess at internal override field names to detect or fix the mismatch.
+		private static void SyncProfileVersionOverride(BuildProfile profile, string version)
 		{
-			try
-			{
-				using var          so = new SerializedObject(profile);
-				SerializedProperty it = so.GetIterator();
+			if (PlayerSettings.bundleVersion == version) return;
 
-				while (it.NextVisible(true))
-				{
-					if (it.propertyType != SerializedPropertyType.String) continue;
-					if (it.name.IndexOf("version", StringComparison.OrdinalIgnoreCase) < 0) continue;
-
-					var overrideVersion = it.stringValue;
-					if (string.IsNullOrEmpty(overrideVersion) || overrideVersion == currentVersion) continue;
-					if (!VersionLikePattern.IsMatch(overrideVersion)) continue;
-
-					Debug.LogWarning($"[ABS] Profile '{profile.name}' has its own '{it.propertyPath}' ('{overrideVersion}'), which differs from the project version just bumped to '{currentVersion}'. If this profile overrides Player Settings, the build will embed its own version instead of the project's. Check the profile's Player Settings Overrides and update or disable it if this is unintended.");
-					return; // one warning per profile is enough
-				}
-			}
-			catch (Exception e)
-			{
-				Debug.LogWarning($"[ABS] Could not check profile '{profile.name}' for a Player Settings version override: {e.Message}");
-			}
+			Debug.LogWarning($"[ABS] Profile '{profile.name}' had its own Player Settings Version override ('{PlayerSettings.bundleVersion}'). Syncing it to '{version}' before building.");
+			PlayerSettings.bundleVersion = version;
+			EditorUtility.SetDirty(profile);
+			AssetDatabase.SaveAssets();
 		}
 
 		private static string GetExtension(BuildTarget platform)
