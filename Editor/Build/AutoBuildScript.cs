@@ -1,8 +1,9 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using UnityEditor;
 using UnityEditor.Build.Profile;
 using UnityEditor.Build.Reporting;
@@ -19,6 +20,13 @@ namespace AutoBuildTool.Editor.Build
 		private const string CLIENT_FOLDER     = "Client";
 		private const char   VERSION_SEPARATOR = ':';
 		private const char   VERSION_DOT       = '.';
+		private const string VERSION_PREFIX    = "v.";
+
+		// BuildProfile.buildTarget is not public, so it has to be read reflectively.
+		// Cached once: this lookup would otherwise run per profile per build.
+		private static readonly PropertyInfo BuildTargetProperty =
+			typeof(BuildProfile).GetProperty("buildTarget",
+			                                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
 
 		#endregion
 
@@ -32,7 +40,7 @@ namespace AutoBuildTool.Editor.Build
 			Major
 		}
 
-		private readonly struct VersionInfo
+		private readonly struct VersionInfo : IComparable<VersionInfo>
 		{
 			private readonly int major;
 			private readonly int minor;
@@ -65,9 +73,33 @@ namespace AutoBuildTool.Editor.Build
 				return new VersionInfo(major, minor, patch, build);
 			}
 
+			// Turns a build directory name ("v.1.2.0_15") back into a comparable version.
+			public static VersionInfo ParseFolderName(string folderName)
+			{
+				if (string.IsNullOrEmpty(folderName)) return new VersionInfo(0, 0, 0, 0);
+
+				var raw = folderName.StartsWith(VERSION_PREFIX, StringComparison.Ordinal)
+					          ? folderName[VERSION_PREFIX.Length..]
+					          : folderName;
+
+				return Parse(raw.Replace('_', VERSION_SEPARATOR));
+			}
+
 			public override string ToString()
 			{
 				return $"{major}.{minor}.{patch}:{build}";
+			}
+
+			public int CompareTo(VersionInfo other)
+			{
+				var result = major.CompareTo(other.major);
+				if (result != 0) return result;
+
+				result = minor.CompareTo(other.minor);
+				if (result != 0) return result;
+
+				result = patch.CompareTo(other.patch);
+				return result != 0 ? result : build.CompareTo(other.build);
 			}
 
 			public VersionInfo Bump(BumpType bumpType)
@@ -129,52 +161,165 @@ namespace AutoBuildTool.Editor.Build
 
 		private static void BuildBoth(BumpType bumpType)
 		{
-			BumpVersion(bumpType);
-			var version      = PlayerSettings.bundleVersion;
-			var safeVersion  = version.Replace(VERSION_SEPARATOR, '_');
-			var basePath     = Path.Combine(BUILDS_FOLDER, $"v.{safeVersion}");
 			var autoSettings = AutoBuildSettings.GetAutoBuildSettings();
 
 			// Force a sync right before building to ensure lists reflect reality
-			autoSettings.SyncProfiles();
-			EditorUtility.SetDirty(autoSettings);
-			AssetDatabase.SaveAssets();
+			if (autoSettings.SyncProfiles())
+			{
+				EditorUtility.SetDirty(autoSettings);
+				AssetDatabase.SaveAssets();
+			}
 
-			var originalProfile = BuildProfile.GetActiveBuildProfile();
+			var serverEnabled = autoSettings.GetEnableServerBuild();
+
+			// Captured as handles, not live references: building one profile can switch the active
+			// build target (e.g. dedicated server vs standalone), which triggers a recompile and
+			// asset reimport. That can invalidate an already-loaded BuildProfile's native object
+			// ("fake null" via Object's == overload) even though the CLR reference stays non-null,
+			// which previously surfaced as "profile reference is missing" on the build after a
+			// target switch. Resolving fresh from the asset path right before each build avoids it.
+			List<ProfileHandle> clientTargets = autoSettings.GetActiveClientProfiles()
+			                                                .Select(p => new ProfileHandle(p)).ToList();
+			List<ProfileHandle> serverTargets = serverEnabled
+				                                    ? autoSettings.GetActiveServerProfiles()
+				                                              .Select(p => new ProfileHandle(p)).ToList()
+				                                    : new List<ProfileHandle>();
+
+			// Validate before bumping: an empty target list must not consume a version number.
+			if (clientTargets.Count == 0 && serverTargets.Count == 0)
+			{
+				Debug.LogError("[ABS] No enabled build profiles. Aborting build (version not bumped).");
+				return;
+			}
+
+			if (clientTargets.Count == 0)
+				Debug.LogWarning("[ABS] No enabled client build profiles. Skipping client builds.");
+
+			if (serverEnabled && serverTargets.Count == 0)
+				Debug.LogWarning("[ABS] Server build is enabled but no server profiles are enabled. Skipping server builds.");
+
+			ProfileHandle? originalHandle = ProfileHandle.From(BuildProfile.GetActiveBuildProfile());
+
+			// A Build Profile with its own Player Settings override transparently redirects the
+			// static PlayerSettings API (PlayerSettings.bundleVersion included) to its own copy of
+			// Player Settings while it is the active profile - see BuildProfile.
+			// UpdateGlobalManagerPlayerSettings, which calls PlayerSettings.
+			// SetOverridePlayerSettingsInternal(this.m_PlayerSettings) whenever this profile is
+			// active and has an override. Whatever profile the editor already had active before
+			// this menu command ran is still active here, so reading/writing bundleVersion without
+			// clearing it first can silently hit that profile's override instead of
+			// ProjectSettings.asset - which is exactly how a profile's own version can drift out of
+			// sync with the project version with every bump. SetActiveBuildProfile(null) is cheap:
+			// it only clears BuildProfileContext.activeProfile and returns, no platform switch.
+			BuildProfile.SetActiveBuildProfile(null);
+
+			BumpVersion(bumpType);
+			var version      = PlayerSettings.bundleVersion;
+			var safeVersion  = version.Replace(VERSION_SEPARATOR, '_');
+			var buildDirName = $"{VERSION_PREFIX}{safeVersion}";
+			var basePath     = Path.Combine(BUILDS_FOLDER, buildDirName);
+
+			var failures  = new List<string>();
+			var succeeded = 0;
 
 			try
 			{
-				if (autoSettings.GetEnableServerBuild())
-					foreach (BuildProfile profile in autoSettings.GetActiveServerProfiles())
-						BuildProfileTarget(basePath, SERVER_FOLDER, profile, true,
-						                   autoSettings.GetAdditionalServerFolders(),
-						                   autoSettings.GetAdditionalServerFiles());
+				foreach (ProfileHandle handle in serverTargets)
+					if (TryBuildProfile(basePath, SERVER_FOLDER, handle, true, version,
+					                    autoSettings.GetAdditionalServerFolders(),
+					                    autoSettings.GetAdditionalServerFiles(), failures))
+						succeeded++;
 
-				foreach (BuildProfile profile in autoSettings.GetActiveClientProfiles())
-					BuildProfileTarget(basePath, CLIENT_FOLDER, profile, false,
-					                   autoSettings.GetAdditionalClientFolders(),
-					                   autoSettings.GetAdditionalClientFiles());
+				foreach (ProfileHandle handle in clientTargets)
+					if (TryBuildProfile(basePath, CLIENT_FOLDER, handle, false, version,
+					                    autoSettings.GetAdditionalClientFolders(),
+					                    autoSettings.GetAdditionalClientFiles(), failures))
+						succeeded++;
 			}
 			finally
 			{
-				BuildProfile.SetActiveBuildProfile(originalProfile);
+				// Re-resolved for the same reason as the build targets: the original active profile
+				// can go stale across the batch too, and restoring a fake-null reference is a no-op.
+				BuildProfile.SetActiveBuildProfile(originalHandle?.Resolve());
+			}
+
+			if (failures.Count > 0)
+				Debug.LogError($"[ABS] {failures.Count} build(s) failed:\n{string.Join("\n", failures)}");
+
+			if (succeeded == 0)
+			{
+				Debug.LogError($"[ABS] Build process finished for v.{version} but no build succeeded.");
+				return;
 			}
 
 			// Clean up old builds if retention is enabled
-			CleanupOldBuilds(autoSettings);
+			CleanupOldBuilds(autoSettings, buildDirName);
 
-			Debug.Log($"Build process finished for v.{version}");
+			Debug.Log($"[ABS] Build process finished for v.{version} ({succeeded} succeeded, {failures.Count} failed)");
 			EditorUtility.RevealInFinder(basePath);
 		}
 
-		private static void BuildProfileTarget(string basePath, string typeFolder, BuildProfile profile, bool isServer,
-		                                       List<CustomFolder> folders, List<CustomFile> files)
+		// Identifies a BuildProfile by asset path rather than holding the live reference, so it can
+		// be re-resolved after a platform switch invalidates an already-loaded instance. See the
+		// comment above the target lists in BuildBoth for why that matters.
+		private readonly struct ProfileHandle
+		{
+			public readonly string AssetPath;
+			public readonly string Name;
+
+			public ProfileHandle(BuildProfile profile)
+			{
+				AssetPath = AssetDatabase.GetAssetPath(profile);
+				Name      = profile.name;
+			}
+
+			public static ProfileHandle? From(BuildProfile profile)
+			{
+				return profile == null ? null : new ProfileHandle(profile);
+			}
+
+			public BuildProfile Resolve()
+			{
+				return string.IsNullOrEmpty(AssetPath) ? null : AssetDatabase.LoadAssetAtPath<BuildProfile>(AssetPath);
+			}
+		}
+
+		// Isolates a single profile so one failure cannot abort the remaining profiles in the batch.
+		private static bool TryBuildProfile(string basePath, string typeFolder, ProfileHandle handle, bool isServer,
+		                                    string version, List<CustomFolder> folders, List<CustomFile> files,
+		                                    List<string> failures)
+		{
+			BuildProfile profile = handle.Resolve();
+			if (profile == null)
+			{
+				failures.Add($"{typeFolder}/{handle.Name}: profile could not be resolved (deleted, or invalidated by a platform switch mid-batch).");
+				return false;
+			}
+
+			try
+			{
+				return BuildProfileTarget(basePath, typeFolder, profile, isServer, version, folders, files);
+			}
+			catch (Exception e)
+			{
+				failures.Add($"{typeFolder}/{profile.name}: {e.Message}");
+				Debug.LogException(e);
+				return false;
+			}
+		}
+
+		private static bool BuildProfileTarget(string basePath, string typeFolder, BuildProfile profile, bool isServer,
+		                                       string version, List<CustomFolder> folders, List<CustomFile> files)
 		{
 			BuildProfile.SetActiveBuildProfile(profile);
+			SyncProfileVersionOverride(profile, version);
 
 			BuildTarget platform     = GetBuildTarget(profile);
 			var         platformName = platform.ToString();
-			var         outputDir    = Path.Combine(basePath, typeFolder, platformName);
+
+			// Keyed on the profile name as well as the platform: several profiles can target the
+			// same platform, and a platform-only path makes them overwrite each other's output.
+			var outputDir = Path.Combine(basePath, typeFolder, platformName, SanitizeFileName(profile.name));
 
 			var ext     = GetExtension(platform);
 			var exeName = isServer ? $"{PlayerSettings.productName}_Server{ext}" : $"{PlayerSettings.productName}{ext}";
@@ -193,17 +338,18 @@ namespace AutoBuildTool.Editor.Build
 			if (report.summary.result != BuildResult.Succeeded)
 			{
 				Debug.LogError($"Build failed for {buildPath}: {report.SummarizeErrors()}");
-				return;
+				return false;
 			}
 
 			Debug.Log($"Build succeeded: {buildPath}");
 
 			var customFilesDir = isFolderBuild ? buildPath : Path.GetDirectoryName(buildPath);
 			CreateFolderTree(customFilesDir, folders);
-			CreateRootFiles(customFilesDir, files);
+			WriteFiles(customFilesDir, files);
+			return true;
 		}
 
-		private static void CleanupOldBuilds(AutoBuildSettings settings)
+		private static void CleanupOldBuilds(AutoBuildSettings settings, string currentBuildDirName)
 		{
 			if (!settings.GetEnableBuildRetention()) return;
 			if (!Directory.Exists(BUILDS_FOLDER)) return;
@@ -213,15 +359,23 @@ namespace AutoBuildTool.Editor.Build
 
 			var dirInfo = new DirectoryInfo(BUILDS_FOLDER);
 
-			// Get all directories that match our version naming format ("v.*")
-			// Order them descending so the newest are at the beginning (index 0)
-			List<DirectoryInfo> buildDirs = dirInfo.GetDirectories("v.*")
-			                                       .OrderByDescending(d => d.CreationTime)
+			// Get all directories that match our version naming format ("v.*") and order them by the
+			// version encoded in the name, newest first. CreationTime is not usable here: a rebuilt or
+			// restored directory keeps a stale timestamp, which can sort the build we just produced
+			// last and delete it. CreationTime only breaks ties between identical versions.
+			List<DirectoryInfo> buildDirs = dirInfo.GetDirectories($"{VERSION_PREFIX}*")
+			                                       .OrderByDescending(d => VersionInfo.ParseFolderName(d.Name))
+			                                       .ThenByDescending(d => d.CreationTime)
 			                                       .ToList();
 
 			if (buildDirs.Count <= maxBuilds) return;
 			// Delete all items starting from index `maxBuilds`
 			for (var i = maxBuilds; i < buildDirs.Count; i++)
+			{
+				// Never delete the build that was just produced.
+				if (string.Equals(buildDirs[i].Name, currentBuildDirName, StringComparison.OrdinalIgnoreCase))
+					continue;
+
 				try
 				{
 					buildDirs[i].Delete(true);
@@ -231,17 +385,51 @@ namespace AutoBuildTool.Editor.Build
 				{
 					Debug.LogWarning($"Failed to delete old build '{buildDirs[i].Name}'. Make sure it isn't opened by another program.\n{e.Message}");
 				}
+			}
 		}
 
+		// Both the reflected property and the serialized field name are tied to Unity's internals,
+		// so each step falls through rather than throwing. The active build target is a safe last
+		// resort here because the only caller sets this profile active immediately beforehand.
 		private static BuildTarget GetBuildTarget(BuildProfile profile)
 		{
-			PropertyInfo prop = typeof(BuildProfile).GetProperty("buildTarget",
-			                                                     BindingFlags.Instance | BindingFlags.NonPublic |
-			                                                     BindingFlags.Public);
-			if (prop != null) return (BuildTarget)prop.GetValue(profile);
+			if (BuildTargetProperty != null)
+				try
+				{
+					return (BuildTarget)BuildTargetProperty.GetValue(profile);
+				}
+				catch (Exception e)
+				{
+					Debug.LogWarning($"[ABS] Could not read BuildProfile.buildTarget reflectively: {e.Message}");
+				}
 
-			using var so = new SerializedObject(profile);
-			return (BuildTarget)so.FindProperty("m_BuildTarget").intValue;
+			using (var so = new SerializedObject(profile))
+			{
+				SerializedProperty targetProp = so.FindProperty("m_BuildTarget");
+				if (targetProp != null) return (BuildTarget)targetProp.intValue;
+			}
+
+			Debug.LogWarning($"[ABS] Could not resolve the build target for profile '{profile.name}'; falling back to the active build target. This Unity version may have renamed BuildProfile's build target member.");
+			return EditorUserBuildSettings.activeBuildTarget;
+		}
+
+		// A Build Profile with its own Player Settings override keeps its own copy of Version.
+		// PlayerSettings.bundleVersion transparently reads/writes that copy while this profile is
+		// active (see the comment above BuildBoth's SetActiveBuildProfile(null) call), and BumpVersion
+		// only ever runs while the project-wide settings are active - so a profile's own override
+		// never gets the bump on its own and would otherwise silently build with a stale version
+		// forever, drifting further from the project version with every release. This uses only the
+		// public bundleVersion property, which resolves to whichever copy is actually in effect for
+		// this profile right now - the same one the build itself is about to embed - so there is no
+		// need to guess at internal override field names to detect or fix the mismatch.
+		private static void SyncProfileVersionOverride(BuildProfile profile, string version)
+		{
+			if (PlayerSettings.bundleVersion == version) return;
+
+			Debug.LogWarning($"[ABS] Profile '{profile.name}' had its own Player Settings Version override ('{PlayerSettings.bundleVersion}'). Syncing it to '{version}' before building.");
+			PlayerSettings.bundleVersion = version;
+			EditorUtility.SetDirty(profile);
+			AssetDatabase.SaveAssets();
 		}
 
 		private static string GetExtension(BuildTarget platform)
@@ -257,6 +445,18 @@ namespace AutoBuildTool.Editor.Build
 			       };
 		}
 
+		// Profile names are user-authored and end up in a directory path.
+		private static string SanitizeFileName(string name)
+		{
+			if (string.IsNullOrWhiteSpace(name)) return "Unnamed";
+
+			var invalid = Path.GetInvalidFileNameChars();
+			var sb      = new StringBuilder(name.Length);
+			foreach (var c in name) sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
+
+			return sb.ToString();
+		}
+
 		private static void CreateFolderTree(string parentDir, List<CustomFolder> folders)
 		{
 			if (folders == null) return;
@@ -265,12 +465,12 @@ namespace AutoBuildTool.Editor.Build
 				var folderPath = Path.Combine(parentDir, folder.Name);
 				Directory.CreateDirectory(folderPath);
 
-				CreateRootFiles(folderPath, folder.Files);
+				WriteFiles(folderPath, folder.Files);
 				CreateFolderTree(folderPath, folder.SubFolders);
 			}
 		}
 
-		private static void CreateRootFiles(string parentDir, List<CustomFile> files)
+		private static void WriteFiles(string parentDir, List<CustomFile> files)
 		{
 			if (files == null) return;
 			foreach (CustomFile file in files)
@@ -280,17 +480,33 @@ namespace AutoBuildTool.Editor.Build
 					{
 						var finalName = string.IsNullOrEmpty(file.Name) ? "NewFile.txt" : file.Name;
 						var filePath  = Path.Combine(parentDir, finalName);
+
+						EnsureParentDirectory(filePath);
 						if (!File.Exists(filePath)) File.WriteAllText(filePath, file.FileContent);
 						break;
 					}
-					case FileOperationType.CopyProjectAsset when file.SourceAsset != null:
+					case FileOperationType.CopyProjectAsset:
 					{
+						// An entry switched to CopyProjectAsset before an asset was picked is an
+						// ordinary UI state, not a programming error - warn and move on.
+						if (file.SourceAsset == null)
+						{
+							Debug.LogWarning($"[ABS] Entry '{file.Name}' is set to CopyProjectAsset but has no source asset assigned. Skipping.");
+							break;
+						}
+
 						var assetPath = AssetDatabase.GetAssetPath(file.SourceAsset);
-						if (string.IsNullOrEmpty(assetPath)) continue;
+						if (string.IsNullOrEmpty(assetPath))
+						{
+							Debug.LogWarning($"[ABS] Source asset for entry '{file.Name}' is not a project asset. Skipping.");
+							break;
+						}
 
 						var fullSourcePath = Path.GetFullPath(assetPath);
 						var finalName      = string.IsNullOrEmpty(file.Name) ? Path.GetFileName(assetPath) : file.Name;
 						var destPath       = Path.Combine(parentDir, finalName);
+
+						EnsureParentDirectory(destPath);
 
 						if (AssetDatabase.IsValidFolder(assetPath))
 							CopyDirectoryContents(fullSourcePath, destPath);
@@ -299,8 +515,16 @@ namespace AutoBuildTool.Editor.Build
 						break;
 					}
 					default:
-						throw new ArgumentOutOfRangeException();
+						Debug.LogWarning($"[ABS] Unsupported file operation '{file.OperationType}' on entry '{file.Name}'. Skipping.");
+						break;
 				}
+		}
+
+		// A destination name may contain a relative sub-path, so the parent may not exist yet.
+		private static void EnsureParentDirectory(string path)
+		{
+			var dir = Path.GetDirectoryName(path);
+			if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 		}
 
 		// Helper to recursively copy an entire folder while skipping Unity's internal .meta files
@@ -310,7 +534,7 @@ namespace AutoBuildTool.Editor.Build
 
 			foreach (var file in Directory.GetFiles(sourceDir))
 			{
-				if (file.EndsWith(".meta")) continue;
+				if (file.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)) continue;
 				var destFile = Path.Combine(destDir, Path.GetFileName(file));
 				File.Copy(file, destFile, true);
 			}
