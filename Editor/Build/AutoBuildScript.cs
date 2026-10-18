@@ -8,6 +8,7 @@ using UnityEditor;
 using UnityEditor.Build.Profile;
 using UnityEditor.Build.Reporting;
 using UnityEngine;
+using VoxelGame.Editor;
 
 namespace AutoBuildTool.Editor.Build
 {
@@ -115,16 +116,28 @@ namespace AutoBuildTool.Editor.Build
 			}
 		}
 
+		private static int    LastBuildNumber;
+		private static string LastSemver = string.Empty;
+
 		private static void BumpVersion(BumpType bumpType)
 		{
 			var         currentVersion = PlayerSettings.bundleVersion;
 			VersionInfo versionInfo    = VersionInfo.Parse(currentVersion);
 			var         newVersion     = versionInfo.Bump(bumpType).ToString();
 
-			PlayerSettings.bundleVersion = newVersion;
-			AssetDatabase.SaveAssets();
+			// The :n part comes from the shared counter, not from the tracked file, and it is stamped in memory
+			// only. Saving the asset here is what put the number into PlayerSettings.asset - a file every
+			// worktree copies - so two workers wrote the same number and the merge kept whichever landed last.
+			string semver = newVersion.Split(':')[0];
+			int    number = BuildNumber.Next(currentVersion, Debug.Log);
 
-			Debug.Log($"Version successfully bumped from [{currentVersion}] to [{newVersion}]");
+			LastBuildNumber = number;
+			LastSemver      = semver;
+
+			PlayerSettings.bundleVersion = $"{semver}:{number}";
+
+			Debug.Log($"Version set from [{currentVersion}] to [{PlayerSettings.bundleVersion}] " +
+			          $"(build number {number}, from the shared counter)");
 		}
 
 		#endregion
@@ -342,6 +355,9 @@ namespace AutoBuildTool.Editor.Build
 			}
 
 			Debug.Log($"Build succeeded: {buildPath}");
+
+			BuildNumber.WriteInfo(isFolderBuild ? buildPath : Path.GetDirectoryName(buildPath),
+			                      LastBuildNumber, LastSemver, Debug.Log);
 
 			var customFilesDir = isFolderBuild ? buildPath : Path.GetDirectoryName(buildPath);
 			CreateFolderTree(customFilesDir, folders);
