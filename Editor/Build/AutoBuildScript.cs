@@ -348,7 +348,19 @@ namespace AutoBuildTool.Editor.Build
 				                   locationPathName = buildPath
 			                   };
 
-			BuildReport report = BuildPipeline.BuildPlayer(buildOptions);
+			BuildReport report;
+
+			// The version is put back whatever the build does. PlayerSettings is a serialized asset: the
+			// assignment marks it and the Editor saves it on exit, so a failed or throwing build that skipped
+			// this would write the number into the tracked file - the drift this replaces.
+			try
+			{
+				report = BuildPipeline.BuildPlayer(buildOptions);
+			}
+			finally
+			{
+				PlayerSettings.bundleVersion = OriginalVersion;
+			}
 
 			if (report.summary.result != BuildResult.Succeeded)
 			{
