@@ -1,7 +1,9 @@
 {
   "name": "AndrzejKebab.AutoBuildTool",
   "rootNamespace": "",
-  "references": [],
+  "references": [
+    "VoxelGame.Editor"
+  ],
   "includePlatforms": [
     "Editor"
   ],
