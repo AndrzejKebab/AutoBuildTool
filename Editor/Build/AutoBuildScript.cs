@@ -118,6 +118,7 @@ namespace AutoBuildTool.Editor.Build
 
 		private static int    LastBuildNumber;
 		private static string LastSemver = string.Empty;
+		private static string OriginalVersion = string.Empty;
 
 		private static void BumpVersion(BumpType bumpType)
 		{
@@ -133,6 +134,7 @@ namespace AutoBuildTool.Editor.Build
 
 			LastBuildNumber = number;
 			LastSemver      = semver;
+			OriginalVersion = currentVersion;
 
 			PlayerSettings.bundleVersion = $"{semver}:{number}";
 
@@ -355,6 +357,11 @@ namespace AutoBuildTool.Editor.Build
 			}
 
 			Debug.Log($"Build succeeded: {buildPath}");
+
+			// The version is put back now that the player has taken it. PlayerSettings is a serialized asset:
+			// the assignment marks it and the Editor saves it on exit, so leaving it would write the number into
+			// the tracked file - the drift this replaces.
+			PlayerSettings.bundleVersion = OriginalVersion;
 
 			BuildNumber.WriteInfo(isFolderBuild ? buildPath : Path.GetDirectoryName(buildPath),
 			                      LastBuildNumber, LastSemver, Debug.Log);
